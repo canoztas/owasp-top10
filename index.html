@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OWASP Top 10 // Interactive Terminal</title>
+  <meta name="description" content="Hacker-style interactive terminal for exploring OWASP Top 10 2025 vs 2021 vulnerabilities with live simulations.">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Prism.js — syntax highlighting (Okaidia dark theme) -->
+  <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-okaidia.min.css" rel="stylesheet">
+
+  <!-- App styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ═══════════════════ Terminal Title Bar ═══════════════════ -->
+  <header class="site-header">
+    <div class="flex items-center">
+      <div class="site-header__dots">
+        <span class="site-header__dot site-header__dot--red"></span>
+        <span class="site-header__dot site-header__dot--yellow"></span>
+        <span class="site-header__dot site-header__dot--green"></span>
+      </div>
+      <button class="hamburger" id="hamburger" aria-label="Toggle navigation">&#9776;</button>
+      <a href="#" class="site-header__brand" id="brand-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <span class="site-header__brand-prompt">~/</span>owasp-top10
+      </a>
+    </div>
+    <div class="site-header__meta">
+      <span>v2025</span>
+      <span>|</span>
+      <a href="https://owasp.org/Top10/" target="_blank" rel="noopener">owasp.org</a>
+    </div>
+  </header>
+
+  <!-- ═══════════════════ Layout ═══════════════════════ -->
+  <div class="layout">
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__section-title">// Vulnerabilities</div>
+      <ul class="sidebar__nav" id="sidebar-nav"></ul>
+    </aside>
+
+    <main class="main-content" id="main-content"></main>
+  </div>
+
+  <!-- ═══════════════════ Scripts ══════════════════════ -->
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-markup.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js"></script>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
