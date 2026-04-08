@@ -172,11 +172,11 @@ function renderVulnerability(id) {
   renderCodeTabs(v);
   renderCodeExample(v, 0);
 
-  // Mount sandbox (before Prism to ensure it always runs)
+  // Mount sandbox
   try { mountSandbox(v.id); } catch (e) { console.error("Sandbox error:", e); }
 
-  // Re-highlight
-  try { if (window.Prism) Prism.highlightAll(); } catch (e) { console.error("Prism error:", e); }
+  // Syntax highlighting
+  highlightCode();
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -225,7 +225,20 @@ function renderCodeExample(v, idx) {
       </div>
     </div>`;
 
-  try { if (window.Prism) Prism.highlightAll(); } catch (e) { console.error("Prism error:", e); }
+  highlightCode();
+}
+
+function highlightCode() {
+  if (!window.Prism) return;
+  requestAnimationFrame(() => {
+    try {
+      document.querySelectorAll('.code-panel__body pre code[class*="language-"]').forEach((el) => {
+        Prism.highlightElement(el);
+      });
+    } catch (e) {
+      console.error("Prism error:", e);
+    }
+  });
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
