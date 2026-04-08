@@ -681,8 +681,8 @@ body {
 }
 
 .code-panel__header {
-  padding: 0.6rem 1rem;
-  font-size: 0.88rem;
+  padding: 0.65rem 1.1rem;
+  font-size: 0.92rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -732,35 +732,39 @@ body {
 }
 
 .code-panel__body {
-  max-height: 800px;
+  max-height: 900px;
   overflow: auto;
-  background: #000;
+  background: #0d1117;
 }
 
 .code-panel__body pre {
   margin: 0;
-  padding: 1.25rem 1.5rem;
-  font-size: 1.05rem;
-  line-height: 1.85;
+  padding: 1.5rem 1.75rem;
+  font-size: 1.1rem;
+  line-height: 1.9;
   tab-size: 2;
   background: transparent !important;
 }
 
-.code-panel--vulnerable .code-panel__body pre code {
-  color: #ff9999;
-  text-shadow: none;
+.code-panel__body pre code {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
 }
 
-.code-panel--secure .code-panel__body pre code {
-  color: #99ffaa;
-  text-shadow: none;
-}
-
-/* Override Prism for our panels */
+/* Let Prism.js Okaidia theme handle syntax highlighting */
 .code-panel pre[class*="language-"],
 .code-panel code[class*="language-"] {
   background: transparent !important;
   text-shadow: none !important;
+}
+
+/* Subtle border tint to distinguish vulnerable vs secure panels */
+.code-panel--vulnerable .code-panel__body {
+  border-left: 3px solid var(--red);
+}
+
+.code-panel--secure .code-panel__body {
+  border-left: 3px solid var(--green);
 }
 
 /* ── Welcome / Landing ────────────────────────────────────────────── */

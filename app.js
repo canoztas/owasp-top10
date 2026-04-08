@@ -452,21 +452,21 @@ function sandboxA01(vulnEl, secureEl) {
 function sandboxA02(vulnEl, secureEl) {
   const files = [
     { name: ".env", size: "1.2K", sensitive: true, content: "DB_PASSWORD=SuperSecret123!\nAWS_SECRET_KEY=AKIAIOSFODNN7EXAMPLE\nSTRIPE_KEY=sk_live_abc123" },
-    { name: ".git/config", size: "342B", sensitive: true, content: '[remote "origin"]\n  url = https://token:ghp_xxxx@github.com/corp/app.git' },
+    { name: ".git/config", size: "342B", sensitive: true, content: "[remote origin]\n  url = https://token:ghp_xxxx@github.com/corp/app.git" },
     { name: "backup/dump.sql", size: "24M", sensitive: true, content: "-- MySQL dump\n-- Passwords in plain text..." },
-    { name: "index.html", size: "8.4K", sensitive: false },
-    { name: "style.css", size: "3.1K", sensitive: false },
-    { name: "app.js", size: "12K", sensitive: false },
+    { name: "index.html", size: "8.4K", sensitive: false, content: "" },
+    { name: "style.css", size: "3.1K", sensitive: false, content: "" },
+    { name: "app.js", size: "12K", sensitive: false, content: "" },
   ];
 
   vulnEl.innerHTML = `
     <p class="sandbox-desc">
       Directory listing enabled. Click files to view.</p>
-    <div style="font-family:var(--font-mono); font-size:0.88rem;">
+    <div style="font-family:var(--font-mono); font-size:0.95rem;">
       <div style="color:var(--text-muted); margin-bottom:0.2rem;">Index of /var/www/html/</div>
-      ${files.map((f) => `
-        <div class="a02-file" data-content="${escapeHtml(f.content || "")}" data-sensitive="${f.sensitive}"
-             style="padding:0.2rem 0.3rem; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03);
+      ${files.map((f, i) => `
+        <div class="a02-file" data-idx="${i}" data-sensitive="${f.sensitive}"
+             style="padding:0.25rem 0.4rem; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03);
                     display:flex; justify-content:space-between;
                     color:${f.sensitive ? "var(--red)" : "var(--text-secondary)"};">
           <span>${f.sensitive ? "! " : "  "}${f.name}</span>
@@ -479,11 +479,11 @@ function sandboxA02(vulnEl, secureEl) {
   vulnEl.querySelectorAll(".a02-file").forEach((el) => {
     el.addEventListener("click", () => {
       const output = document.getElementById("a02-vuln-output");
-      const content = el.dataset.content;
-      const sensitive = el.dataset.sensitive === "true";
-      if (content) {
-        output.innerHTML = sensitive
-          ? '<span class="log-error">[!!] SENSITIVE FILE EXPOSED:</span>\n' + escapeHtml(content)
+      const idx = parseInt(el.dataset.idx, 10);
+      const file = files[idx];
+      if (file.content) {
+        output.innerHTML = file.sensitive
+          ? '<span class="log-error">[!!] SENSITIVE FILE EXPOSED:</span>\n' + escapeHtml(file.content)
           : '<span class="log-info">[--] Public file. No risk.</span>';
       } else {
         output.innerHTML = '<span class="log-info">[--] Public file. No sensitive data.</span>';
@@ -494,10 +494,10 @@ function sandboxA02(vulnEl, secureEl) {
   secureEl.innerHTML = `
     <p class="sandbox-desc">
       Directory listing disabled. Access rules enforced.</p>
-    <div style="font-family:var(--font-mono); font-size:0.88rem;">
-      ${files.map((f) => `
-        <div class="a02-file-secure" data-sensitive="${f.sensitive}"
-             style="padding:0.2rem 0.3rem; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03);
+    <div style="font-family:var(--font-mono); font-size:0.95rem;">
+      ${files.map((f, i) => `
+        <div class="a02-file-secure" data-idx="${i}" data-sensitive="${f.sensitive}"
+             style="padding:0.25rem 0.4rem; cursor:pointer; border-bottom:1px solid rgba(255,255,255,0.03);
                     display:flex; justify-content:space-between; color:var(--text-secondary);">
           <span>  ${f.name}</span><span style="color:var(--text-muted);">${f.size}</span>
         </div>`).join("")}
@@ -508,7 +508,8 @@ function sandboxA02(vulnEl, secureEl) {
   secureEl.querySelectorAll(".a02-file-secure").forEach((el) => {
     el.addEventListener("click", () => {
       const output = document.getElementById("a02-secure-output");
-      output.innerHTML = el.dataset.sensitive === "true"
+      const idx = parseInt(el.dataset.idx, 10);
+      output.innerHTML = files[idx].sensitive
         ? '<span class="log-success">[OK] 403 Forbidden</span>\n<span class="log-info">[--] Blocked by .htaccess rules.</span>'
         : '<span class="log-success">[OK] 200 OK — Public file served.</span>';
     });
