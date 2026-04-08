@@ -637,8 +637,8 @@ body {
 }
 
 .code-tab {
-  padding: 0.5rem 1rem;
-  font-size: 0.82rem;
+  padding: 0.6rem 1.15rem;
+  font-size: 0.88rem;
   font-family: var(--font-mono);
   color: var(--text-muted);
   background: transparent;
@@ -681,8 +681,8 @@ body {
 }
 
 .code-panel__header {
-  padding: 0.5rem 0.85rem;
-  font-size: 0.82rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.88rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -703,6 +703,18 @@ body {
   color: var(--green);
 }
 
+.code-panel__lang-badge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 .code-panel__header-dot {
   width: 10px;
   height: 10px;
@@ -720,16 +732,16 @@ body {
 }
 
 .code-panel__body {
-  max-height: 600px;
+  max-height: 800px;
   overflow: auto;
   background: #000;
 }
 
 .code-panel__body pre {
   margin: 0;
-  padding: 1rem 1.25rem;
-  font-size: 0.95rem;
-  line-height: 1.75;
+  padding: 1.25rem 1.5rem;
+  font-size: 1.05rem;
+  line-height: 1.85;
   tab-size: 2;
   background: transparent !important;
 }

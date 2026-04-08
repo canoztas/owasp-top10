@@ -200,23 +200,28 @@ function renderCodeExample(v, idx) {
   if (!compEl) return;
 
   const ex = v.examples[idx];
-  const lang = detectLanguage(ex.vulnerableCode);
+  const vulnLang = ex.vulnLang || detectLanguage(ex.vulnerableCode);
+  const secureLang = ex.secureLang || detectLanguage(ex.secureCode);
+  const vulnLabel = LANG_LABELS[vulnLang] || vulnLang;
+  const secureLabel = LANG_LABELS[secureLang] || secureLang;
 
   compEl.innerHTML = `
     <div class="code-panel code-panel--vulnerable">
       <div class="code-panel__header">
         <span class="code-panel__header-dot"></span> VULNERABLE
+        <span class="code-panel__lang-badge">${vulnLabel}</span>
       </div>
       <div class="code-panel__body">
-        <pre><code class="language-${lang}">${escapeHtml(ex.vulnerableCode)}</code></pre>
+        <pre><code class="language-${vulnLang}">${escapeHtml(ex.vulnerableCode)}</code></pre>
       </div>
     </div>
     <div class="code-panel code-panel--secure">
       <div class="code-panel__header">
         <span class="code-panel__header-dot"></span> SECURE
+        <span class="code-panel__lang-badge">${secureLabel}</span>
       </div>
       <div class="code-panel__body">
-        <pre><code class="language-${lang}">${escapeHtml(ex.secureCode)}</code></pre>
+        <pre><code class="language-${secureLang}">${escapeHtml(ex.secureCode)}</code></pre>
       </div>
     </div>`;
 
@@ -233,19 +238,56 @@ function escapeHtml(str) {
 }
 
 function detectLanguage(code) {
-  if (code.trimStart().startsWith("<") || code.includes("</")) return "markup";
-  if (
-    code.includes("#!/") ||
-    code.match(/^#\s/m) ||
-    code.includes("Options ") ||
-    code.includes(".npmrc") ||
-    code.includes("name: Deploy")
-  )
-    return "bash";
-  if (code.trimStart().startsWith("{") && code.includes('"dependencies"'))
+  const t = code.trimStart();
+  // HTML/Markup — only if it starts with < or has closing tags (not PHP or Apache config)
+  if ((t.startsWith("<") && !t.startsWith("<?php") && !t.startsWith("<FilesMatch") && !t.startsWith("<DirectoryMatch")) || (code.includes("</") && !code.includes("<?php") && !code.includes("</FilesMatch") && !code.includes("</DirectoryMatch"))) return "markup";
+  // JSON
+  if (t.startsWith("{") && code.includes('"dependencies"'))
     return "json";
+  // PHP
+  if (code.includes("<?php") || code.includes("$pdo") || code.includes("$stmt") || code.includes("password_hash(") || code.includes("session_start") || code.includes("ini_set("))
+    return "php";
+  // Java (check before Python — has specific annotations/keywords)
+  if (code.includes("public class ") || code.includes("@RestController") || code.includes("@PostMapping") || code.includes("@DeleteMapping") || code.includes("@ControllerAdvice") || code.includes("@ExceptionHandler") || code.includes("ResponseEntity") || code.includes("@RateLimiter"))
+    return "java";
+  // C#
+  if (code.includes("[Authorize]") || code.includes("[ApiController]") || code.includes("IActionResult") || code.includes("public async Task") || code.includes("Result<") || code.includes("StatusCode(") || code.includes("StringComparison."))
+    return "csharp";
+  // Go (check before Python — both use # but Go has func, package, :=)
+  if (code.includes("func ") && (code.includes("package ") || code.includes(":= ") || code.includes("http.Handler") || code.includes("http.ResponseWriter") || code.includes("json.NewDecoder") || code.includes("json.NewEncoder")))
+    return "go";
+  // Ruby (check before Python — both use def and #)
+  if (code.match(/\bend\b/) && (code.includes("do |") || code.includes("require '") || code.includes("class ") && code.includes("< ") || code.includes(".to_json") || code.includes("def ")))
+    return "ruby";
+  // Python (check before bash)
+  if ((code.includes("def ") && code.match(/:\s*$/m)) || code.includes("import ") && (code.includes("flask") || code.includes("hashlib") || code.includes("bcrypt") || code.includes("secrets") || code.includes("logging") || code.includes("requests") || code.includes("json")) || code.includes("@app.route") || code.includes("f\"") || code.includes("__name__"))
+    return "python";
+  // YAML
+  if (code.match(/^\s*name:\s/m) && (code.includes("steps:") || code.includes("jobs:") || code.includes("on:")))
+    return "yaml";
+  // Bash / Config files
+  if (code.includes("#!/") || code.includes("Options +") || code.includes("Options -") || code.includes(".npmrc") || code.includes("<FilesMatch") || code.includes("<DirectoryMatch") || code.includes("Header set ") || code.includes("pip install") || code.includes("npm install") || code.includes("gem install"))
+    return "bash";
+  // SQL
+  if (code.match(/\b(SELECT|INSERT|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/i) && !code.includes("function"))
+    return "sql";
   return "javascript";
 }
+
+const LANG_LABELS = {
+  javascript: "JavaScript",
+  markup: "HTML",
+  bash: "Bash / Config",
+  json: "JSON",
+  python: "Python",
+  java: "Java",
+  go: "Go",
+  csharp: "C#",
+  php: "PHP",
+  ruby: "Ruby",
+  sql: "SQL",
+  yaml: "YAML"
+};
 
 function updateActiveLink() {
   document.querySelectorAll(".sidebar__link").forEach((link) => {
