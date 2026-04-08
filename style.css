@@ -787,6 +787,7 @@ body {
   line-height: inherit;
   letter-spacing: 0.01em;
   min-width: max-content;
+  color: #d6deeb;
 }
 
 /* Let Prism.js Okaidia theme handle syntax highlighting */
@@ -794,6 +795,70 @@ body {
 .code-panel__body code[class*="language-"] {
   background: transparent !important;
   text-shadow: none !important;
+}
+
+/* Local IDE-like token palette so highlighting still works without CDN theme CSS */
+.code-panel .token.comment,
+.code-panel .token.prolog,
+.code-panel .token.doctype,
+.code-panel .token.cdata {
+  color: #637777;
+}
+
+.code-panel .token.punctuation {
+  color: #7f8fa3;
+}
+
+.code-panel .token.operator,
+.code-panel .token.entity {
+  color: #89ddff;
+}
+
+.code-panel .token.keyword,
+.code-panel .token.atrule {
+  color: #c792ea;
+}
+
+.code-panel .token.string,
+.code-panel .token.char,
+.code-panel .token.attr-value,
+.code-panel .token.regex {
+  color: #ecc48d;
+}
+
+.code-panel .token.number,
+.code-panel .token.boolean,
+.code-panel .token.constant {
+  color: #f78c6c;
+}
+
+.code-panel .token.function,
+.code-panel .token.method {
+  color: #82aaff;
+}
+
+.code-panel .token.class-name,
+.code-panel .token.namespace {
+  color: #ffcb6b;
+}
+
+.code-panel .token.property,
+.code-panel .token.attr-name,
+.code-panel .token.parameter {
+  color: #addb67;
+}
+
+.code-panel .token.tag,
+.code-panel .token.decorator,
+.code-panel .token.annotation,
+.code-panel .token.important {
+  color: #f07178;
+}
+
+.code-panel .token.variable,
+.code-panel .token.symbol,
+.code-panel .token.builtin {
+  color: #4ec9b0;
 }
 
 /* Subtle border tint to distinguish vulnerable vs secure panels */

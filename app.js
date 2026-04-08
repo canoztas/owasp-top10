@@ -175,9 +175,6 @@ function renderVulnerability(id) {
   // Mount sandbox
   try { mountSandbox(v.id); } catch (e) { console.error("Sandbox error:", e); }
 
-  // Syntax highlighting
-  highlightCode();
-
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -206,8 +203,6 @@ function renderCodeExample(v, idx) {
   compEl.innerHTML = `
     ${renderCodePanel("vulnerable", ex.vulnerableCode, vulnerable)}
     ${renderCodePanel("secure", ex.secureCode, secure)}`;
-
-  highlightCode();
 }
 
 function renderCodePanel(type, code, presentation) {
@@ -222,7 +217,7 @@ function renderCodePanel(type, code, presentation) {
       <div class="code-panel__body">
         <div class="code-panel__editor">
           <div class="code-panel__gutter" aria-hidden="true">${renderLineNumbers(code)}</div>
-          <pre class="language-${presentation.prismLanguage}"><code class="language-${presentation.prismLanguage}">${escapeHtml(code)}</code></pre>
+          <pre class="language-${presentation.prismLanguage}"><code class="language-${presentation.prismLanguage}">${getHighlightedCodeMarkup(code, presentation)}</code></pre>
         </div>
       </div>
     </div>`;
@@ -236,15 +231,117 @@ function renderLineNumbers(code) {
   ).join("");
 }
 
-function highlightCode() {
-  if (!window.Prism) return;
-  requestAnimationFrame(() => {
+function getHighlightedCodeMarkup(code, presentation) {
+  const { prismLanguage } = presentation;
+
+  if (
+    window.Prism &&
+    typeof Prism.highlight === "function" &&
+    Prism.languages &&
+    Prism.languages[prismLanguage]
+  ) {
     try {
-      Prism.highlightAllUnder(mainContent);
+      return Prism.highlight(code, Prism.languages[prismLanguage], prismLanguage);
     } catch (e) {
-      console.error("Prism error:", e);
+      console.warn("Prism highlight fallback:", e);
     }
-  });
+  }
+
+  return fallbackHighlight(code, prismLanguage);
+}
+
+function fallbackHighlight(code, language) {
+  let text = escapeHtml(code);
+  const stashed = [];
+  const markerRegex = /@@CODETOKEN(\d+)@@/g;
+  const markerOnlyRegex = /^@@CODETOKEN\d+@@$/;
+  const wrapToken = (value, kind) => `<span class="token ${kind}">${value}</span>`;
+  const stashMarkup = (markup) => {
+    const idx = stashed.length;
+    stashed.push(markup);
+    return `@@CODETOKEN${idx}@@`;
+  };
+  const replacePlainSegments = (transform) => {
+    text = text
+      .split(/(@@CODETOKEN\d+@@)/g)
+      .map((part) => (markerOnlyRegex.test(part) ? part : transform(part)))
+      .join("");
+  };
+  const protect = (regex, kind) => {
+    replacePlainSegments((segment) =>
+      segment.replace(regex, (match) => stashMarkup(wrapToken(match, kind)))
+    );
+  };
+  const transform = (regex, formatter) => {
+    replacePlainSegments((segment) =>
+      segment.replace(regex, (...args) => stashMarkup(formatter(...args)))
+    );
+  };
+
+  if (language === "markup") {
+    protect(/&lt;!--[\s\S]*?--&gt;/g, "comment");
+    protect(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, "string");
+    transform(
+      /(&lt;\/?)([A-Za-z][\w:-]*)/g,
+      (_, open, tagName) => `${open}${wrapToken(tagName, "tag")}`
+    );
+    transform(
+      /\b([A-Za-z_:][\w:.-]*)(=)/g,
+      (_, attrName, equalsSign) => `${wrapToken(attrName, "attr-name")}${equalsSign}`
+    );
+  } else if (language === "json") {
+    transform(
+      /"(?:\\.|[^"\\])*"(?=\s*:)/g,
+      (match) => wrapToken(match, "property")
+    );
+    protect(/"(?:\\.|[^"\\])*"/g, "string");
+    protect(/\b(?:true|false|null)\b/g, "boolean");
+    protect(/-?\b\d+(?:\.\d+)?\b/g, "number");
+  } else if (language === "yaml") {
+    protect(/#.*/g, "comment");
+    protect(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, "string");
+    transform(
+      /^(\s*-?\s*)([A-Za-z0-9_.-]+)(\s*:)/gm,
+      (_, indent, key, colon) => `${indent}${wrapToken(key, "property")}${colon}`
+    );
+    protect(/\b(?:true|false|null|yes|no|on|off)\b/gi, "boolean");
+    protect(/-?\b\d+(?:\.\d+)?\b/g, "number");
+  } else {
+    if (language === "python" || language === "ruby" || language === "bash") {
+      protect(/#.*/g, "comment");
+    } else if (language === "sql") {
+      protect(/--.*/g, "comment");
+      protect(/\/\*[\s\S]*?\*\//g, "comment");
+    } else {
+      protect(/\/\/.*/g, "comment");
+      protect(/\/\*[\s\S]*?\*\//g, "comment");
+    }
+
+    if (language === "python") {
+      protect(/("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, "string");
+    } else {
+      protect(/`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, "string");
+    }
+
+    transform(
+      /(^|\s)(@\w[\w.]*)/gm,
+      (_, lead, decorator) => `${lead}${wrapToken(decorator, "decorator")}`
+    );
+
+    if (language === "csharp") {
+      protect(/\[[A-Za-z_][A-Za-z0-9_.]*(?:\([^\]\n]*\))?\]/g, "annotation");
+    }
+
+    const keywordPattern = KEYWORD_PATTERNS[language] || KEYWORD_PATTERNS.javascript;
+    if (keywordPattern) protect(keywordPattern, "keyword");
+
+    protect(/\b(?:true|false|null|nil|None)\b/gi, "boolean");
+    protect(/-?\b\d+(?:\.\d+)?\b/g, "number");
+    protect(/\b(?:self|this|super|cls)\b/g, "builtin");
+    protect(/\b[A-Za-z_][$\w]*(?=\s*\()/g, "function");
+  }
+
+  return text.replace(markerRegex, (_, idx) => stashed[Number(idx)]);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -330,6 +427,18 @@ const SUPPORTED_PRISM_LANGUAGES = new Set([
   "sql",
   "yaml"
 ]);
+
+const KEYWORD_PATTERNS = {
+  javascript: /\b(?:const|let|var|function|return|if|else|await|async|try|catch|finally|new|class|throw|import|from|export|default|for|while|switch|case|break|continue|typeof|instanceof|extends)\b/g,
+  python: /\b(?:from|import|as|def|return|if|elif|else|for|while|try|except|finally|with|class|lambda|pass|raise|in|not|and|or|is|global|nonlocal)\b/g,
+  java: /\b(?:public|private|protected|class|interface|enum|return|if|else|for|while|try|catch|finally|throw|throws|new|static|final|void|package|import|extends|implements)\b/g,
+  csharp: /\b(?:public|private|protected|internal|class|interface|enum|return|if|else|for|foreach|while|try|catch|finally|throw|new|static|async|await|using|namespace|var)\b/g,
+  go: /\b(?:func|package|import|return|if|else|for|range|go|defer|var|const|type|struct|interface|map|chan|select|switch|case|default)\b/g,
+  php: /\b(?:function|class|public|private|protected|return|if|else|foreach|as|new|echo|require|include)\b/g,
+  ruby: /\b(?:def|class|module|if|elsif|else|end|do|require|return|unless|begin|rescue|ensure|yield)\b/g,
+  bash: /\b(?:if|then|else|fi|for|do|done|case|esac|export|echo|cat|grep|curl|npm|pip|gem|sudo)\b/g,
+  sql: /\b(?:SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|AND|OR|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP|BY|ORDER|CREATE|ALTER|DROP|TABLE|VALUES|INTO|LIMIT|SET)\b/gi
+};
 
 const LANG_LABELS = {
   javascript: "JavaScript",
