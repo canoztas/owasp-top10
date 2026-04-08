@@ -200,41 +200,47 @@ function renderCodeExample(v, idx) {
   if (!compEl) return;
 
   const ex = v.examples[idx];
-  const vulnLang = ex.vulnLang || detectLanguage(ex.vulnerableCode);
-  const secureLang = ex.secureLang || detectLanguage(ex.secureCode);
-  const vulnLabel = LANG_LABELS[vulnLang] || vulnLang;
-  const secureLabel = LANG_LABELS[secureLang] || secureLang;
+  const vulnerable = getCodePresentation(ex.vulnerableCode, ex.vulnLang);
+  const secure = getCodePresentation(ex.secureCode, ex.secureLang);
 
   compEl.innerHTML = `
-    <div class="code-panel code-panel--vulnerable">
-      <div class="code-panel__header">
-        <span class="code-panel__header-dot"></span> VULNERABLE
-        <span class="code-panel__lang-badge">${vulnLabel}</span>
-      </div>
-      <div class="code-panel__body">
-        <pre><code class="language-${vulnLang}">${escapeHtml(ex.vulnerableCode)}</code></pre>
-      </div>
-    </div>
-    <div class="code-panel code-panel--secure">
-      <div class="code-panel__header">
-        <span class="code-panel__header-dot"></span> SECURE
-        <span class="code-panel__lang-badge">${secureLabel}</span>
-      </div>
-      <div class="code-panel__body">
-        <pre><code class="language-${secureLang}">${escapeHtml(ex.secureCode)}</code></pre>
-      </div>
-    </div>`;
+    ${renderCodePanel("vulnerable", ex.vulnerableCode, vulnerable)}
+    ${renderCodePanel("secure", ex.secureCode, secure)}`;
 
   highlightCode();
+}
+
+function renderCodePanel(type, code, presentation) {
+  const panelTitle = type === "vulnerable" ? "VULNERABLE" : "SECURE";
+
+  return `
+    <div class="code-panel code-panel--${type}">
+      <div class="code-panel__header">
+        <span class="code-panel__header-dot"></span> ${panelTitle}
+        <span class="code-panel__lang-badge">${presentation.label}</span>
+      </div>
+      <div class="code-panel__body">
+        <div class="code-panel__editor">
+          <div class="code-panel__gutter" aria-hidden="true">${renderLineNumbers(code)}</div>
+          <pre class="language-${presentation.prismLanguage}"><code class="language-${presentation.prismLanguage}">${escapeHtml(code)}</code></pre>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderLineNumbers(code) {
+  const lineCount = code.split(/\r?\n/).length;
+  return Array.from(
+    { length: lineCount },
+    (_, idx) => `<span class="code-panel__line-number">${idx + 1}</span>`
+  ).join("");
 }
 
 function highlightCode() {
   if (!window.Prism) return;
   requestAnimationFrame(() => {
     try {
-      document.querySelectorAll('.code-panel__body pre code[class*="language-"]').forEach((el) => {
-        Prism.highlightElement(el);
-      });
+      Prism.highlightAllUnder(mainContent);
     } catch (e) {
       console.error("Prism error:", e);
     }
@@ -252,10 +258,11 @@ function escapeHtml(str) {
 
 function detectLanguage(code) {
   const t = code.trimStart();
+  const withoutBanner = t.replace(/^\/\/[^\n]*\n+/, "").trimStart();
   // HTML/Markup — only if it starts with < or has closing tags (not PHP or Apache config)
   if ((t.startsWith("<") && !t.startsWith("<?php") && !t.startsWith("<FilesMatch") && !t.startsWith("<DirectoryMatch")) || (code.includes("</") && !code.includes("<?php") && !code.includes("</FilesMatch") && !code.includes("</DirectoryMatch"))) return "markup";
   // JSON
-  if (t.startsWith("{") && code.includes('"dependencies"'))
+  if ((withoutBanner.startsWith("{") || withoutBanner.startsWith("[")) && /"[^"\n]+"\s*:/.test(withoutBanner))
     return "json";
   // PHP
   if (code.includes("<?php") || code.includes("$pdo") || code.includes("$stmt") || code.includes("password_hash(") || code.includes("session_start") || code.includes("ini_set("))
@@ -286,6 +293,43 @@ function detectLanguage(code) {
     return "sql";
   return "javascript";
 }
+
+function getCodePresentation(code, preferredLanguage) {
+  const language = preferredLanguage || detectLanguage(code);
+  const prismLanguage = normalizePrismLanguage(language, code);
+
+  return {
+    label: LANG_LABELS[language] || LANG_LABELS[prismLanguage] || "Code",
+    prismLanguage
+  };
+}
+
+function normalizePrismLanguage(language, code) {
+  if (language === "json" && /(^|\n)\s*\/[/*]/.test(code)) {
+    return "javascript";
+  }
+
+  if (SUPPORTED_PRISM_LANGUAGES.has(language)) {
+    return language;
+  }
+
+  return "javascript";
+}
+
+const SUPPORTED_PRISM_LANGUAGES = new Set([
+  "javascript",
+  "markup",
+  "bash",
+  "json",
+  "python",
+  "java",
+  "go",
+  "csharp",
+  "php",
+  "ruby",
+  "sql",
+  "yaml"
+]);
 
 const LANG_LABELS = {
   javascript: "JavaScript",
