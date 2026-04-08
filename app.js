@@ -172,11 +172,11 @@ function renderVulnerability(id) {
   renderCodeTabs(v);
   renderCodeExample(v, 0);
 
-  // Re-highlight
-  if (window.Prism) Prism.highlightAll();
+  // Mount sandbox (before Prism to ensure it always runs)
+  try { mountSandbox(v.id); } catch (e) { console.error("Sandbox error:", e); }
 
-  // Mount sandbox
-  mountSandbox(v.id);
+  // Re-highlight
+  try { if (window.Prism) Prism.highlightAll(); } catch (e) { console.error("Prism error:", e); }
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -225,7 +225,7 @@ function renderCodeExample(v, idx) {
       </div>
     </div>`;
 
-  if (window.Prism) Prism.highlightAll();
+  try { if (window.Prism) Prism.highlightAll(); } catch (e) { console.error("Prism error:", e); }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

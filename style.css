@@ -276,7 +276,6 @@ body {
   margin-left: var(--sidebar-width);
   flex: 1;
   padding: 2rem 2.5rem 4rem;
-  max-width: 1200px;
 }
 
 /* ── Vulnerability Header ─────────────────────────────────────────── */
@@ -637,8 +636,8 @@ body {
 }
 
 .code-tab {
-  padding: 0.6rem 1.15rem;
-  font-size: 0.88rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.92rem;
   font-family: var(--font-mono);
   color: var(--text-muted);
   background: transparent;
@@ -732,23 +731,25 @@ body {
 }
 
 .code-panel__body {
-  max-height: 900px;
+  min-height: 350px;
+  max-height: none;
   overflow: auto;
   background: #0d1117;
 }
 
 .code-panel__body pre {
   margin: 0;
-  padding: 1.5rem 1.75rem;
-  font-size: 1.1rem;
-  line-height: 1.9;
+  padding: 1.75rem 2rem;
+  font-size: 1.15rem;
+  line-height: 2;
   tab-size: 2;
   background: transparent !important;
 }
 
 .code-panel__body pre code {
   font-family: var(--font-mono);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
 }
 
 /* Let Prism.js Okaidia theme handle syntax highlighting */
